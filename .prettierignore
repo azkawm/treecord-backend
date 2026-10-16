@@ -1,0 +1,13 @@
+node_modules/
+pnpm-lock.yaml
+dist/
+.next/
+.turbo/
+coverage/
+packages/contracts/
+supabase/
+apps/ai/
+treecord-backend-kit/
+packages/shared/src/abis/
+packages/shared/src/db.types.ts
+*.md

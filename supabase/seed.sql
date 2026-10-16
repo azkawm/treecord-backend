@@ -1,0 +1,2 @@
+-- Treecord seed data. Runs after migrations on `supabase db reset`.
+-- Species reference rows are added in prompt 6.
