@@ -13,7 +13,13 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:status": "supabase status",
+    "db:reset": "supabase db reset",
+    "db:test": "supabase test db",
+    "db:types": "node scripts/db-types.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -22,6 +28,7 @@
     "eslint-config-prettier": "10.1.8",
     "globals": "17.13.0",
     "prettier": "3.9.10",
+    "supabase": "2.118.0",
     "turbo": "2.11.8",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.2"

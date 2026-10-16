@@ -2,6 +2,8 @@ export * from "./abis/index.js";
 export * from "./addresses.js";
 export * from "./ai.js";
 export * from "./constants.js";
+export type { Database, Enums, Json, Tables, TablesInsert, TablesUpdate } from "./db.types.js";
+export { Constants as DbConstants } from "./db.types.js";
 export * from "./eip712.js";
 export * from "./env.js";
 export * from "./evidence.js";

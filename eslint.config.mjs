@@ -13,6 +13,7 @@ export const ignores = [
   "**/.turbo/**",
   "**/coverage/**",
   "**/next-env.d.ts",
+  "packages/shared/src/db.types.ts",
   "packages/contracts/**",
   "apps/ai/**",
   "treecord-backend-kit/**",

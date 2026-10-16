@@ -5,3 +5,5 @@ packages:
 # Dependencies allowed to run install scripts (pnpm blocks them by default).
 onlyBuiltDependencies:
   - esbuild
+  # downloads the Supabase CLI binary for this platform
+  - supabase
