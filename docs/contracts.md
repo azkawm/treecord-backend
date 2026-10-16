@@ -2,7 +2,7 @@
 
 Solidity ^0.8.24, OpenZeppelin v5, Foundry. No upgradeability. Sources live in `packages/contracts/src`.
 
-This file covers the contracts built in prompt 2. VerificationGateway and CarbonLedger are added in prompt 3. Their interfaces already exist in `src/interfaces/` so the rest compiles against them.
+Every contract implements an interface in `src/interfaces/`. Shared enums, structs and custom errors live in `src/libraries/TreecordTypes.sol`.
 
 ## Overview
 
@@ -33,6 +33,8 @@ flowchart LR
 | CampaignFactory | `src/CampaignFactory.sol` | Validates configs, deploys campaign clones |
 | Campaign | `src/Campaign.sol` | USDC escrow, slots, milestone incentives, refunds |
 | TreeRegistry | `src/TreeRegistry.sol` | Tree identity, health, check-ins, flags |
+| VerificationGateway | `src/VerificationGateway.sol` | Verifies EIP-712 attestations and applies them |
+| CarbonLedger | `src/CarbonLedger.sol` | Non-transferable ERC-1155 carbon credits: reservations, issuance, sale, retirement |
 | TreecordTypes | `src/libraries/TreecordTypes.sol` | Shared enums, structs, custom errors |
 | TreecordConstants | `src/libraries/TreecordConstants.sol` | Protocol defaults and the milestone schedule |
 
@@ -42,8 +44,10 @@ flowchart LR
 2. `TreeRegistry(roles)`
 3. `Campaign(roles, usdc, treeRegistry)`: the implementation. Its constructor disables initializers.
 4. `CampaignFactory(roles, campaignImplementation)`
-5. `roles.setFactory`, `roles.setTreeRegistry`, and later `roles.setGateway` and `roles.setCarbonLedger`. Each component address can be set once.
-6. Grant `OPERATOR_ROLE`, `ATTESTER_ROLE` and `ISSUER_ROLE` on TreecordRoles.
+5. `VerificationGateway(roles)`
+6. `CarbonLedger(roles, usdc, uri)`
+7. `roles.setFactory`, `roles.setTreeRegistry`, `roles.setGateway`, `roles.setCarbonLedger`. Each component address can be set once.
+8. Grant `OPERATOR_ROLE`, `ATTESTER_ROLE` and `ISSUER_ROLE` on TreecordRoles.
 
 ## Design decisions
 
@@ -65,7 +69,7 @@ Roles (OpenZeppelin AccessControl):
 | Role | Holder | Powers |
 |---|---|---|
 | `DEFAULT_ADMIN_ROLE` | Deployer | Grants roles, sets treasury, wires components once |
-| `OPERATOR_ROLE` | Backend operator wallet | Claims slots for planters, assigns anchor slots, marks trees dead, resolves flags, draws reserve |
+| `OPERATOR_ROLE` | Backend operator wallet | Claims slots for planters, assigns anchor slots, marks trees dead, resolves flags, draws reserve, sets carbon estimates and prices |
 | `ATTESTER_ROLE` | Backend attestation signer | Signs EIP-712 attestations checked by the gateway |
 | `ISSUER_ROLE` | Backend operator wallet | Mirrors registry issuance in CarbonLedger |
 
@@ -224,11 +228,122 @@ Other storage: `treeCount`, `treeOfSlot[campaign][slotId]`, `flaggerOf[treeId]`.
 | `FlagResolved(treeId, upheld, noteHash, pausedSeconds)` | `resolveFlag`. `pausedSeconds` is zero when upheld |
 | `TreeCompleted(treeId)` | `markCompleted` |
 
-## Interfaces for prompt 3
+## VerificationGateway
 
-- `IVerificationGateway`: `submit`, `submitBatch`, `hashAttestation`, `nonceUsed`, event `AttestationAccepted(nonce, kind, treeId, evidenceHash, score)`. The `Attestation` struct is in TreecordTypes.
-- `ICarbonLedger`: estimate, reservations, issuance, price, buy, retire, and their events. Carbon amounts use 3 decimals (`1000 = 1 tCO2e`), so pro-rata reservations keep kilogram precision while registry batches stay whole tonnes.
+Accepts attestations signed by an `ATTESTER_ROLE` key and applies them. Anyone may submit a valid attestation. In practice the backend relayer does, so planters never pay gas.
+
+### EIP-712
+
+- Domain: `name = "Treecord"`, `version = "1"`, `chainId = 84532` (taken from `block.chainid`), `verifyingContract = VerificationGateway`.
+- Type string, exactly as in PRODUCT_KNOWLEDGE.md section 8:
+
+```
+Attestation(uint8 kind,address campaign,uint256 slotId,uint256 treeId,address planter,uint8 milestone,bytes32 evidenceHash,bytes8 geohash,uint16 score,uint256 nonce,uint64 expiry)
+```
+
+- `ATTESTATION_TYPEHASH` is the keccak256 of that string. `hashAttestation(att)` returns the full EIP-712 digest, and `domainSeparator()` returns the domain separator, so the shared TypeScript package can prove parity. The contract also exposes EIP-5267 `eip712Domain()`.
+- Signatures are 65-byte ECDSA (`r ‖ s ‖ v`). Malleable or malformed signatures revert with `InvalidSignature`.
+
+### Checks in `submit(att, signature)`
+
+| Check | Error |
+|---|---|
+| Signature recovers cleanly | `InvalidSignature` |
+| Signer holds `ATTESTER_ROLE` | `InvalidAttester(signer)` |
+| Nonce never used | `NonceAlreadyUsed(nonce)` |
+| `block.timestamp <= expiry` | `AttestationExpired(expiry)` |
+| `score <= 10000` | `InvalidScore(score)` |
+| `kind <= 3` | `InvalidAttestationKind(kind)` |
+| Campaign deployed by the factory | `UnknownCampaign(campaign)` |
+| PLANTED has `treeId == 0` and `milestone == 0` | `InvalidPlantedAttestation` |
+| Other kinds: tree belongs to `campaign` | `TreeCampaignMismatch(treeId, campaign)` |
+| Other kinds: `planter` is the tree's planter | `WrongPlanter(treeId, planter)` |
+
+The nonce is marked used before any external call.
+
+### Routing
+
+| Kind | Value | Effect |
+|---|---|---|
+| PLANTED | 0 | `TreeRegistry.registerTree`, then `Campaign.releaseMilestone(treeId, 0, planter)` |
+| ALIVE | 1 | `TreeRegistry.recordCheckIn`, then `Campaign.releaseMilestone(treeId, milestone, planter)` |
+| DEAD | 2 | `TreeRegistry.markDead` |
+| REPLANTED | 3 | `TreeRegistry.markReplanted` |
+
+`submitBatch(atts, signatures)` applies attestations in order and reverts the whole batch if any one fails. The relayer simulates first and drops failing items, so a batch revert means state changed between simulation and inclusion. Batches are kept to at most 10 items.
+
+Storage: `nonceUsed[nonce]`. The factory and tree registry are read from TreecordRoles at call time.
+
+| Event | When |
+|---|---|
+| `AttestationAccepted(nonce, kind, treeId, evidenceHash, score)` | Every applied attestation. For PLANTED, `treeId` is the newly minted id |
+
+## CarbonLedger
+
+ERC-1155 where the token id is the batch id. Carbon amounts use 3 decimals: `1000 = 1 tCO2e`, so one unit is one kilogram. Prices are USDC base units per whole tonne.
+
+### Non-transferability
+
+`_update` allows only three balance movements:
+
+| Path | From | To |
+|---|---|---|
+| Issuance allocation | zero address | reservation holder or the ledger (inventory) |
+| Sale | the ledger (inventory) | buyer |
+| Retirement | holder | zero address |
+
+Any other transfer reverts with `NonTransferable`. `setApprovalForAll` always reverts. Mints and sales skip the ERC-1155 receiver hook: credits can never move again, and a holder contract without the hook could otherwise block a whole issuance.
+
+**Platform inventory is held by the ledger itself,** not the treasury wallet. Changing the treasury therefore never strands inventory, and the treasury does not need to accept ERC-1155 tokens. Sale proceeds go to the current treasury.
+
+### Flow
+
+| Function | Caller | Effect |
+|---|---|---|
+| `setEstimate(campaign, amount)` | Operator | Campaign must be Active. Each contributor who has not declined gets `amount * contribution / totalRaised`. Replaceable until the first batch is issued, then `EstimateLocked` |
+| `declineReservation(campaign)` | Contributor | Releases the unfilled part of the caller's reservation to inventory. Already allocated credits stay |
+| `issueBatch(campaign, registry, serialStart, serialEnd, vintage, amount)` | Issuer | Campaign Active or Completed. Fills unfilled reservations pro rata (exactly, when the batch covers them all), the rest goes to inventory |
+| `setPrice(batchId, usdcPerTonne)` | Operator | Sets the sale price |
+| `buy(batchId, amount)` | Anyone | Pays `ceil(amount * price / 1000)` USDC to the treasury and receives credits from inventory |
+| `retire(batchId, amount, beneficiary, purpose)` | Holder | Burns credits and stores a `Retirement` record. Beneficiary must not be empty |
+| `setURI(newUri)` | Admin | Updates the metadata URI pattern |
+
+Views: `reservationOf`, `allocatedOf`, `remainingReservation`, `declined`, `campaignCarbon`, `inventoryOf`, `getBatch`, `getRetirement`, `batchCount`, `retirementCount`, `uri`.
+
+Rounding: reservation remainders are never reserved, and pro-rata allocation remainders below one unit per holder go to inventory. Allocation never exceeds the batch amount or any holder's reservation.
+
+Gas note: `setEstimate` and `issueBatch` loop over the campaign's contributors. That is fine for MVP campaign sizes.
+
+### Storage highlights
+
+| Variable | Meaning |
+|---|---|
+| `campaignCarbon[campaign]` | `estimatedAmount`, `reservedTotal`, `outstanding` (unfilled reservations), `issuedAmount`, `issuanceStarted` |
+| `reservationOf[campaign][holder]` | Reserved amount, filled plus unfilled |
+| `allocatedOf[campaign][holder]` | Amount already filled by issuance |
+| `declined[campaign][holder]` | Holder declined. Later estimate updates skip them |
+| `_batches[batchId]` | `CarbonBatch`: campaign, vintage, amount, price, registry, serial range |
+| `_retirements[retirementId]` | `Retirement`: batch, holder, amount, time, beneficiary, purpose |
+
+### Events
+
+| Event | When |
+|---|---|
+| `EstimateSet(campaign, estimatedAmount)` | `setEstimate` |
+| `Reserved(campaign, holder, amount)` | Each reservation set by `setEstimate` |
+| `ReservationDeclined(campaign, holder, amount)` | `declineReservation` |
+| `BatchIssued(batchId, campaign, registry, serialStart, serialEnd, vintage, amount)` | `issueBatch` |
+| `Allocated(batchId, holder, amount)` | Each allocation. `holder` is the ledger address for inventory |
+| `PriceSet(batchId, usdcPerTonne)` | `setPrice` |
+| `Purchased(batchId, buyer, amount, usdcPaid)` | `buy` |
+| `Retired(retirementId, batchId, holder, amount, beneficiary, purpose)` | `retire` |
+
+Plus the standard ERC-1155 events `TransferSingle` and `URI`.
 
 ## Lint
 
-`forge build` runs forge-lint. The `block-timestamp` lint is disabled in `foundry.toml` because windows and deadlines are time-based by design. Every narrowing cast carries a `forge-lint: disable-next-line(unsafe-typecast)` comment that explains why it is safe.
+`forge build` runs forge-lint and reports zero warnings.
+
+- `block-timestamp` is disabled in `foundry.toml` because windows and deadlines are time-based by design.
+- Every narrowing cast carries a `forge-lint: disable-next-line(unsafe-typecast)` comment explaining why it is safe.
+- `calls-loop` and `require-revert-in-loop` are disabled only on the gateway's `_submit` path (all-or-nothing batches are specified) and the ledger's contributor loops, each with a comment.

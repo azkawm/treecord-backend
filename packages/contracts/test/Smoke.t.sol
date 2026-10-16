@@ -7,14 +7,21 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {Campaign} from "../src/Campaign.sol";
 import {CampaignFactory} from "../src/CampaignFactory.sol";
+import {CarbonLedger} from "../src/CarbonLedger.sol";
 import {TreeRegistry} from "../src/TreeRegistry.sol";
 import {TreecordRoles} from "../src/TreecordRoles.sol";
+import {VerificationGateway} from "../src/VerificationGateway.sol";
 import {ITreeRegistry} from "../src/interfaces/ITreeRegistry.sol";
 import {TreecordConstants as C} from "../src/libraries/TreecordConstants.sol";
 import {
+    Attestation,
     CampaignConfig,
     CampaignStatus,
     TreeStatus,
+    AttestationExpired,
+    InvalidAttester,
+    NonceAlreadyUsed,
+    NonTransferable,
     PlanterCapExceeded,
     TreeFrozen
 } from "../src/libraries/TreecordTypes.sol";
@@ -31,9 +38,8 @@ contract SmokeUSDC is ERC20 {
     }
 }
 
-/// @notice End-to-end smoke test of the prompt 2 contracts. The full suite arrives in prompt 4.
-/// @dev This test contract acts as the VerificationGateway and as the operator.
-contract SmokeTest is Test {
+/// @notice Shared deployment for the smoke tests. The full suite with TestBase arrives in prompt 4.
+abstract contract SmokeBase is Test {
     uint64 internal constant UNIT = 60;
 
     SmokeUSDC internal usdc;
@@ -48,7 +54,9 @@ contract SmokeTest is Test {
     address internal planter1 = makeAddr("planter1");
     address internal planter2 = makeAddr("planter2");
 
-    function setUp() public {
+    /// @dev Deploys core contracts with this test contract as admin and operator, then creates and funds a
+    ///      campaign: 4 trees (1 anchor, 3 open), 1000 USDC target, donorA 600 and donorB 400.
+    function _deployCore(address gateway) internal {
         usdc = new SmokeUSDC();
         roles = new TreecordRoles(address(this), treasury);
         registry = new TreeRegistry(roles);
@@ -57,7 +65,7 @@ contract SmokeTest is Test {
 
         roles.setFactory(address(factory));
         roles.setTreeRegistry(address(registry));
-        roles.setGateway(address(this));
+        if (gateway != address(0)) roles.setGateway(gateway);
         roles.grantRole(roles.OPERATOR_ROLE(), address(this));
 
         CampaignConfig memory cfg = CampaignConfig({
@@ -81,6 +89,20 @@ contract SmokeTest is Test {
 
         usdc.mint(donorA, 600e6);
         usdc.mint(donorB, 600e6);
+    }
+
+    function _contribute(address donor, uint256 amount) internal {
+        vm.startPrank(donor);
+        usdc.approve(address(campaign), amount);
+        campaign.contribute(amount);
+        vm.stopPrank();
+    }
+}
+
+/// @notice Campaign and TreeRegistry lifecycle, with this test contract acting as the gateway.
+contract SmokeLifecycleTest is SmokeBase {
+    function setUp() public {
+        _deployCore(address(this));
     }
 
     function test_fullLifecycle() public {
@@ -157,11 +179,157 @@ contract SmokeTest is Test {
         assertEq(campaign.claimRefund(), 306e6);
         assertEq(usdc.balanceOf(address(campaign)), 0);
     }
+}
 
-    function _contribute(address donor, uint256 amount) internal {
-        vm.startPrank(donor);
-        usdc.approve(address(campaign), amount);
-        campaign.contribute(amount);
+/// @notice VerificationGateway signatures and CarbonLedger flows with the real contracts wired.
+contract SmokeGatewayLedgerTest is SmokeBase {
+    VerificationGateway internal gateway;
+    CarbonLedger internal ledger;
+
+    address internal attester;
+    uint256 internal attesterKey;
+    address internal relayer = makeAddr("relayer");
+    address internal buyer = makeAddr("buyer");
+
+    function setUp() public {
+        _deployCore(address(0));
+        gateway = new VerificationGateway(roles);
+        ledger = new CarbonLedger(roles, IERC20(address(usdc)), "https://treecord.app/api/carbon/batches/{id}.json");
+        roles.setGateway(address(gateway));
+        roles.setCarbonLedger(address(ledger));
+
+        (attester, attesterKey) = makeAddrAndKey("attester");
+        roles.grantRole(roles.ATTESTER_ROLE(), attester);
+        roles.grantRole(roles.ISSUER_ROLE(), address(this));
+
+        _contribute(donorA, 600e6);
+        _contribute(donorB, 600e6);
+        campaign.claimSlotsFor(planter1, 2);
+    }
+
+    function test_gatewayPlantedAndAlive() public {
+        Attestation memory planted = _attestation(0, 0, 0, 1);
+
+        // Digest parity: OpenZeppelin EIP712 equals a hand-built EIP-712 digest.
+        bytes32 structHash = keccak256(
+            abi.encode(
+                gateway.ATTESTATION_TYPEHASH(),
+                planted.kind,
+                planted.campaign,
+                planted.slotId,
+                planted.treeId,
+                planted.planter,
+                planted.milestone,
+                planted.evidenceHash,
+                planted.geohash,
+                planted.score,
+                planted.nonce,
+                planted.expiry
+            )
+        );
+        bytes32 expected = keccak256(abi.encodePacked("\x19\x01", gateway.domainSeparator(), structHash));
+        assertEq(gateway.hashAttestation(planted), expected);
+
+        // A relayer submits. The planter is paid milestone 0 without sending a transaction.
+        bytes memory sig = _sign(attesterKey, planted);
+        vm.prank(relayer);
+        uint256 treeId = gateway.submit(planted, sig);
+        assertEq(treeId, 1);
+        assertEq(usdc.balanceOf(planter1), 17.5e6);
+        assertTrue(gateway.nonceUsed(1));
+
+        // Replay, wrong signer, and expiry are rejected.
+        vm.expectRevert(abi.encodeWithSelector(NonceAlreadyUsed.selector, 1));
+        gateway.submit(planted, sig);
+
+        (address mallory, uint256 malloryKey) = makeAddrAndKey("mallory");
+        Attestation memory forged = _attestation(1, treeId, 1, 2);
+        bytes memory forgedSig = _sign(malloryKey, forged);
+        vm.expectRevert(abi.encodeWithSelector(InvalidAttester.selector, mallory));
+        gateway.submit(forged, forgedSig);
+
+        Attestation memory stale = _attestation(1, treeId, 1, 3);
+        bytes memory staleSig = _sign(attesterKey, stale);
+        vm.warp(stale.expiry + 1);
+        vm.expectRevert(abi.encodeWithSelector(AttestationExpired.selector, stale.expiry));
+        gateway.submit(stale, staleSig);
+
+        // ALIVE milestone 1 through a batch of one, inside its window.
+        vm.warp(registry.getTree(treeId).plantedAt + 3 * UNIT);
+        Attestation[] memory atts = new Attestation[](1);
+        bytes[] memory sigs = new bytes[](1);
+        atts[0] = _attestation(1, treeId, 1, 4);
+        sigs[0] = _sign(attesterKey, atts[0]);
+        gateway.submitBatch(atts, sigs);
+        assertEq(usdc.balanceOf(planter1), 35e6);
+        assertEq(registry.getTree(treeId).checkInCount, 1);
+    }
+
+    function test_carbonReserveIssueBuyRetire() public {
+        // 100 t estimate, reserved 60/40 by contribution.
+        ledger.setEstimate(address(campaign), 100_000);
+        assertEq(ledger.reservationOf(address(campaign), donorA), 60_000);
+        assertEq(ledger.reservationOf(address(campaign), donorB), 40_000);
+
+        // donorB declines, so their share will go to inventory.
+        vm.prank(donorB);
+        ledger.declineReservation(address(campaign));
+
+        // 80 t issued: donorA is filled first (60 t), the remaining 20 t go to inventory.
+        uint256 batchId = ledger.issueBatch(address(campaign), "SRN PPI", "IDN-0001", "IDN-0080", 2026, 80_000);
+        assertEq(ledger.balanceOf(donorA, batchId), 60_000);
+        assertEq(ledger.balanceOf(donorB, batchId), 0);
+        assertEq(ledger.inventoryOf(batchId), 20_000);
+        assertEq(ledger.remainingReservation(address(campaign), donorA), 0);
+
+        // Buyer purchases 1.5 t at 15 USDC per tonne. Proceeds go to the treasury.
+        ledger.setPrice(batchId, 15e6);
+        usdc.mint(buyer, 100e6);
+        uint256 treasuryBefore = usdc.balanceOf(treasury);
+        vm.startPrank(buyer);
+        usdc.approve(address(ledger), type(uint256).max);
+        assertEq(ledger.buy(batchId, 1_500), 22.5e6);
         vm.stopPrank();
+        assertEq(ledger.balanceOf(buyer, batchId), 1_500);
+        assertEq(usdc.balanceOf(treasury) - treasuryBefore, 22.5e6);
+
+        // Credits cannot move between users.
+        vm.prank(donorA);
+        vm.expectRevert(NonTransferable.selector);
+        ledger.safeTransferFrom(donorA, buyer, batchId, 1, "");
+        vm.expectRevert(NonTransferable.selector);
+        ledger.setApprovalForAll(buyer, true);
+
+        // Retirement burns and records.
+        vm.prank(donorA);
+        uint256 retirementId = ledger.retire(batchId, 10_000, "PT Contoh", "2026 office emissions");
+        assertEq(retirementId, 1);
+        assertEq(ledger.balanceOf(donorA, batchId), 50_000);
+        assertEq(ledger.getRetirement(retirementId).amount, 10_000);
+    }
+
+    function _attestation(uint8 kind, uint256 treeId, uint8 milestone, uint256 nonce)
+        internal
+        view
+        returns (Attestation memory)
+    {
+        return Attestation({
+            kind: kind,
+            campaign: address(campaign),
+            slotId: 2,
+            treeId: treeId,
+            planter: planter1,
+            milestone: milestone,
+            evidenceHash: keccak256(abi.encode("evidence", nonce)),
+            geohash: bytes8("qqguwvt"),
+            score: 9_200,
+            nonce: nonce,
+            expiry: uint64(vm.getBlockTimestamp() + 1 hours)
+        });
+    }
+
+    function _sign(uint256 key, Attestation memory att) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, gateway.hashAttestation(att));
+        return abi.encodePacked(r, s, v);
     }
 }

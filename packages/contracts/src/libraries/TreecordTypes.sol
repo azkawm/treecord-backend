@@ -188,3 +188,29 @@ error ReplantDeadlinePassed(uint256 treeId, uint256 deadline);
 error ReplantDeadlineNotPassed(uint256 treeId, uint256 deadline);
 error NotContributor(address caller);
 error MilestonesNotSettled(uint256 treeId);
+
+// ---------------------------------------------------------------------------
+// Errors: verification gateway
+// ---------------------------------------------------------------------------
+
+error InvalidSignature();
+error InvalidAttester(address signer);
+error NonceAlreadyUsed(uint256 nonce);
+error AttestationExpired(uint64 expiry);
+error InvalidAttestationKind(uint8 kind);
+error InvalidScore(uint16 score);
+error InvalidPlantedAttestation();
+error TreeCampaignMismatch(uint256 treeId, address campaign);
+error LengthMismatch();
+
+// ---------------------------------------------------------------------------
+// Errors: carbon ledger
+// ---------------------------------------------------------------------------
+
+error NonTransferable();
+error EstimateLocked(address campaign);
+error NoReservation(address campaign, address holder);
+error UnknownBatch(uint256 batchId);
+error PriceNotSet(uint256 batchId);
+error InsufficientInventory(uint256 batchId, uint256 requested, uint256 available);
+error EmptyBeneficiary();

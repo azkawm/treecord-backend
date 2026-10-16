@@ -104,6 +104,7 @@ contract TreecordRoles is AccessControl {
 /// @dev `roles` is immutable, so it lives in bytecode and is shared by every clone of an implementation.
 abstract contract RoleGated {
     // Same values as the TreecordRoles constants, kept local to avoid an extra external call per check.
+    bytes32 internal constant DEFAULT_ADMIN_ROLE = 0x00;
     bytes32 internal constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 internal constant ATTESTER_ROLE = keccak256("ATTESTER_ROLE");
     bytes32 internal constant ISSUER_ROLE = keccak256("ISSUER_ROLE");
