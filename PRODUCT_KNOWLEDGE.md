@@ -327,3 +327,5 @@ These resolve ambiguities found in the sections above. Where they conflict with 
 11. **Milestone schedule is fixed.** The six milestones end at month 36 regardless of `commitmentUnits`. A longer commitment only delays campaign completion.
 12. **Rounding dust is tracked.** Remainders from per-tree and per-milestone division are tracked explicitly and become refundable at completion. Fuzz tests prove no USDC is created or lost.
 13. **Toolchain versions.** Node 24 LTS (Node 20 reached end of life in April 2026). TypeScript 6.0 (typescript-eslint does not support 7 yet). Privy server SDK is `@privy-io/node` (`@privy-io/server-auth` is deprecated).
+14. **Growth consistency applies to ALIVE only.** A dead tree is not expected to grow and a replanted seedling is a new plant. For PLANTED, DEAD and REPLANTED the attestation score uses tree presence in place of growth. A challenge that was issued but not scored is a reject.
+15. **Carbon amounts use 3 decimals on-chain** (1000 units = 1 tCO2e) so pro-rata reservations keep kilogram precision. Platform carbon inventory is held by the CarbonLedger contract itself, and sale proceeds go to the treasury.

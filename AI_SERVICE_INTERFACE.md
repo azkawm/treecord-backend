@@ -98,12 +98,14 @@ Calls come from the backend worker, not from a user request, so the 60 second ti
 | Recapture | `recapture > 0.30` |
 | Tree presence | `treePresence < 0.70` |
 | Duplicate | `maxSimilarity > 0.90` |
-| Growth consistency (non-planting) | `growthConsistency < 0.50` |
-| Challenge | challenge issued and `challengeVisible < 0.80` |
+| Growth consistency (ALIVE only) | `growthConsistency < 0.50` |
+| Challenge | challenge issued and `challengeVisible < 0.80` or null |
 
 - Borderline band: a score that passes its threshold but is within 0.10 of it → `needs_review` (operator decides). A score past its threshold is always a reject. Example: liveness 0.70 to below 0.80 is review, below 0.70 is reject.
 - `speciesMatch` and `ndvi` are advisory only in MVP and never reject on their own.
-- Attestation `score` (0 to 10000) = weighted average: liveness 30%, treePresence 30%, (1 - recapture) 20%, growthConsistency 20% (use treePresence again for `PLANTED`).
+- Growth consistency is checked only for `ALIVE`. A `DEAD` tree is not expected to show growth and a `REPLANTED` seedling is a new plant, so any value returned for those kinds is ignored. A null value on `ALIVE` sends the submission to review.
+- Attestation `score` (0 to 10000) = weighted average: liveness 30%, treePresence 30%, (1 - recapture) 20%, growthConsistency 20% (use treePresence in place of growth for `PLANTED`, `DEAD` and `REPLANTED`).
+- Implementation: `applyPolicy` in `packages/shared/src/policy.ts`. Reason codes: `liveness_low`, `liveness_borderline`, `recapture_high`, `recapture_borderline`, `tree_presence_low`, `tree_presence_borderline`, `duplicate_high`, `duplicate_borderline`, `growth_low`, `growth_borderline`, `growth_missing`, `challenge_low`, `challenge_borderline`, `challenge_not_scored`.
 
 ---
 
