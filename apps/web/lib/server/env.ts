@@ -11,6 +11,9 @@ import { z } from "zod";
 const serverEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
+  // Public base URL of this app. Used to build campaign metadata URIs.
+  PUBLIC_APP_URL: z.url().default("http://localhost:3000"),
+
   // Chain
   BASE_SEPOLIA_RPC_URL: z.url(),
   CHAIN_ID: chainIdSchema,

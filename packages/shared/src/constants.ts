@@ -94,6 +94,12 @@ export const ATTESTATION_TTL_SECONDS = 60 * 60;
 // Carbon
 // ---------------------------------------------------------------------------
 
+/**
+ * Version label of the planter agreement that assigns carbon rights to the platform. Its keccak256 hash is
+ * stored on the planter's profile when they accept. Bump it when the agreement text changes.
+ */
+export const CARBON_RIGHTS_AGREEMENT_VERSION = "treecord-planter-carbon-rights-v1";
+
 /** Carbon amounts use 3 decimals on-chain: 1000 units = 1 tCO2e. */
 export const CARBON_DECIMALS = 3;
 export const CARBON_UNITS_PER_TONNE = 1000;

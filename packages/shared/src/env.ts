@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CHAIN_ID } from "./constants.js";
+import { ANVIL_CHAIN_ID, CHAIN_ID } from "./constants.js";
 
 // Building blocks for the per-app env loaders (apps/web/lib/server/env.ts, apps/worker/src/env.ts).
 
@@ -11,7 +11,10 @@ export const addressSchema = z
   .string()
   .regex(/^0x[0-9a-fA-F]{40}$/, "must be a 0x-prefixed 20-byte hex address");
 
-export const chainIdSchema = z.coerce.number().pipe(z.literal(CHAIN_ID));
+/** Base Sepolia, or local anvil for development. */
+export const chainIdSchema = z.coerce
+  .number()
+  .pipe(z.union([z.literal(CHAIN_ID), z.literal(ANVIL_CHAIN_ID)]));
 
 export const requiredString = z.string().min(1, "is required");
 

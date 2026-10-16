@@ -188,6 +188,26 @@ export const deviceRegisterRequestSchema = z
 export type DeviceRegisterRequest = z.infer<typeof deviceRegisterRequestSchema>;
 
 // ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
+/** Roles a user can pick for themselves. Auditor and operator are granted manually. */
+export const SELF_SERVICE_ROLES = ["donor", "planter"] as const;
+
+/** POST /api/profile */
+export const profileUpsertRequestSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(80).optional(),
+    role: z.enum(SELF_SERVICE_ROLES).optional(),
+    /** Required when becoming a planter: carbon rights go to the platform, planters earn incentives only. */
+    carbonRightsAgreementAccepted: z.literal(true).optional(),
+    isBuyer: z.boolean().optional(),
+  })
+  .strict()
+  .refine((body) => Object.keys(body).length > 0, "must change at least one field");
+export type ProfileUpsertRequest = z.infer<typeof profileUpsertRequestSchema>;
+
+// ---------------------------------------------------------------------------
 // Campaigns
 // ---------------------------------------------------------------------------
 
