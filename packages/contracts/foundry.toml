@@ -11,6 +11,11 @@ optimizer = true
 optimizer_runs = 200
 via_ir = false
 
+[lint]
+# Milestone windows, deadlines and replant timers are time-based by design. Validator drift of a few
+# seconds is irrelevant at production time units (30 days), so this lint only adds noise.
+exclude_lints = ["block-timestamp"]
+
 [fmt]
 line_length = 120
 tab_width = 4
