@@ -340,6 +340,79 @@ Gas note: `setEstimate` and `issueBatch` loop over the campaign's contributors. 
 
 Plus the standard ERC-1155 events `TransferSingle` and `URI`.
 
+## Testing
+
+```sh
+cd packages/contracts
+forge test                 # 150 tests: unit, fuzz (512 runs), invariant (128 runs x 100 calls)
+pnpm coverage              # forge coverage over src/ only
+```
+
+| File | Covers |
+|---|---|
+| `test/utils/TestBase.sol` | Deploys and wires everything, labeled actors, signed attestation helpers |
+| `test/mocks/MockUSDC.sol` | 6-decimal open-mint token (also deployed on anvil) |
+| `Roles.t.sol` | Set-once wiring, zero checks, admin-only access |
+| `CampaignFactory.t.sol` | Every config validation rule, creator and operator auth, clone initialization |
+| `Funding.t.sol` | Partial, exact and overfunding, exact treasury transfers, refunds after a missed deadline, rounding |
+| `Slots.t.sol` | Open claims, per-planter cap, claim deadline, anchor assignment, rollover, no double assignment |
+| `VerificationGateway.t.sol` | Type hash and domain, digest parity fixture, every rejection path, all four kinds, batches |
+| `Milestones.t.sol` | Schedule and amounts, early, in-window (both edges), late, forfeits, double pay |
+| `TreeHealth.t.sol` | Dead, replant before and after the deadline, expiry forfeits, completion |
+| `Flags.t.sol` | Contributor-only flags, one active flag, paused payouts, uphold, dismiss with schedule shift |
+| `Completion.t.sol` | Completion floor, unsettled trees, full lifecycle with pro-rata leftover refunds, reserve draws |
+| `CarbonLedger.t.sol` | Reservations, declines, issuance order and rounding, sale, non-transferability, retirement |
+| `Fuzz.t.sol` | Activation conserves USDC for any split, completion refunds never exceed the pool, reservation and issuance rounding |
+| `invariant/CampaignInvariant.t.sol` | Random plant, check-in, forfeit, death, replant, expiry, flag, resolve, complete, reserve draw, refund and time jumps |
+
+Invariants checked after every call:
+
+- Campaign USDC balance >= unpaid committed incentives + unused reserve + forfeited pool.
+- While Active, balance == incentivePool + reserveAmount - totalPaid - reserveDrawn.
+- After completion, balance == refundPool - refunds pulled.
+- totalPaid + forfeitedPool <= plantedCount * perTreeIncentive.
+
+**Parity fixture.** `test_parityFixture` pins the EIP-712 digest of a fixed attestation on chain 84532 with the gateway at `0x1111111111111111111111111111111111111111`: `0xa2a16bb4d852b11e15802eaa9c06005c38528d81023d86e406cac952340062ed`. The value was computed independently with viem `hashTypedData`. The shared package parity test (prompt 5) uses the same vector.
+
+Line coverage of `src/` is above 99%.
+
+## Deployment
+
+Scripts live in `packages/contracts/script`. `script/with-env.mjs` loads env vars from the repo root `.env` (or from `--env <file>`), because Foundry only reads a `.env` in its own folder. Variables already set in the shell win.
+
+### Local (anvil)
+
+```sh
+pnpm --filter @treecord/contracts anvil                 # terminal 1
+pnpm --filter @treecord/contracts deploy:local          # terminal 2
+pnpm --filter @treecord/contracts demo-campaign:local
+pnpm --filter @treecord/contracts export-abis
+```
+
+`deploy:local` uses `packages/contracts/.env.anvil`, which holds anvil's public default dev keys. On chain 31337 the deploy script deploys a MockUSDC instead of reading `USDC_ADDRESS`. A fresh anvil always produces the same addresses, so the committed `deployments/31337.json` stays valid.
+
+### Base Sepolia
+
+1. Fill the root `.env`: `BASE_SEPOLIA_RPC_URL`, `DEPLOYER_PRIVATE_KEY`, `OPERATOR_PRIVATE_KEY`, `ATTESTER_PRIVATE_KEY`, `TREASURY_ADDRESS`, `USDC_ADDRESS`.
+2. Fund the deployer and operator with Base Sepolia ETH. A full deploy uses about 15M gas.
+3. `pnpm --filter @treecord/contracts simulate:base-sepolia` runs everything against a fork without sending.
+4. `pnpm --filter @treecord/contracts deploy:base-sepolia`
+5. `pnpm --filter @treecord/contracts demo-campaign:base-sepolia` (optional)
+6. `pnpm --filter @treecord/contracts export-abis`, then commit `deployments/84532.json` and the regenerated `packages/shared/src/addresses.ts`.
+
+### Outputs
+
+| File | Content |
+|---|---|
+| `deployments/<chainId>.json` | `chainId`, `deployBlock` (indexer start), `deployer`, `operator`, `attester`, `treasury`, `usdc`, and every contract address. Written only when broadcasting |
+| `deployments/<chainId>-demo.json` | The demo campaign address |
+| `packages/shared/src/abis/*.ts` | One `as const` ABI per contract, for typed viem calls |
+| `packages/shared/src/addresses.ts` | `deployments` by chain id and `getDeployment(chainId)` |
+
+### Demo campaign defaults
+
+`CreateDemoCampaign.s.sol` broadcasts with the operator key, which may create campaigns on a donor's behalf. Defaults: 10 trees, 20 USDC target (faucet friendly), `DEMO_TIME_UNIT_SECONDS` (180) per unit, funding closes after 20 units and claims after 40 units. Override with `DEMO_TREE_TARGET`, `DEMO_FUNDING_TARGET`, `DEMO_CREATOR` and `DEMO_METADATA_URI`.
+
 ## Lint
 
 `forge build` runs forge-lint and reports zero warnings.

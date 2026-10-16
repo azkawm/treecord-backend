@@ -116,6 +116,9 @@ importers:
       forge-std:
         specifier: github:foundry-rs/forge-std#v1.17.0
         version: https://codeload.github.com/foundry-rs/forge-std/tar.gz/f3dae6e6ee381f25eb6a246f7da9b85c91a68219
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
 
   packages/shared:
     dependencies:

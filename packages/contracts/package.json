@@ -3,16 +3,26 @@
   "version": "0.0.0",
   "private": true,
   "description": "Treecord Solidity contracts (Foundry)",
+  "type": "module",
   "scripts": {
     "build": "forge build",
     "test": "forge test",
+    "coverage": "forge coverage --no-match-coverage \"(test|script)\"",
     "lint": "forge fmt --check",
-    "format": "forge fmt"
+    "format": "forge fmt",
+    "anvil": "anvil",
+    "deploy:local": "node script/with-env.mjs --env .env.anvil forge script script/Deploy.s.sol --rpc-url anvil --broadcast",
+    "demo-campaign:local": "node script/with-env.mjs --env .env.anvil forge script script/CreateDemoCampaign.s.sol --rpc-url anvil --broadcast",
+    "deploy:base-sepolia": "node script/with-env.mjs forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast",
+    "demo-campaign:base-sepolia": "node script/with-env.mjs forge script script/CreateDemoCampaign.s.sol --rpc-url base_sepolia --broadcast",
+    "simulate:base-sepolia": "node script/with-env.mjs forge script script/Deploy.s.sol --rpc-url base_sepolia",
+    "export-abis": "tsx script/export-abis.ts"
   },
   "dependencies": {
     "@openzeppelin/contracts": "5.6.1"
   },
   "devDependencies": {
-    "forge-std": "github:foundry-rs/forge-std#v1.17.0"
+    "forge-std": "github:foundry-rs/forge-std#v1.17.0",
+    "tsx": "4.23.15"
   }
 }

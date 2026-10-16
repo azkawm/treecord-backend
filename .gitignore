@@ -34,6 +34,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# anvil's public default dev keys, safe to commit
+!packages/contracts/.env.anvil
 
 # Logs and OS files
 *.log

@@ -49,12 +49,6 @@ library TreecordConstants {
         return uint64(unpack(MILESTONE_DUE_UNITS_PACKED, milestone));
     }
 
-    /// @notice Share of the per-tree incentive paid at a milestone, in basis points.
-    function milestoneShareBps(uint8 milestone) internal pure returns (uint256) {
-        if (milestone >= MILESTONE_COUNT) revert InvalidMilestone(milestone);
-        return unpack(MILESTONE_SHARES_PACKED, milestone);
-    }
-
     /// @notice Reads the 16-bit entry at `index` from a packed schedule. Does not bounds-check.
     function unpack(uint256 packed, uint8 index) internal pure returns (uint256) {
         return (packed >> (uint256(index) * 16)) & 0xFFFF;
