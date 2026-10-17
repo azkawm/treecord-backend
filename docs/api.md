@@ -48,6 +48,10 @@ Next.js route handlers in `apps/web/app/api`. All bodies and responses are JSON.
 | POST | `/api/campaigns/:address/claims` | planter | Claim open slots (gasless) |
 | POST | `/api/operator/campaigns/:address/anchor-assign` | operator | Assign anchor slots to a planter |
 | GET | `/api/jobs/:id` | creator, operator | Relayer job status |
+| POST | `/api/evidence/upload-url` | planter | Announce a video and get a signed upload URL |
+| POST | `/api/evidence/:submissionId/submit` | planter (owner) | Submit the signed payload, run prechecks, queue scoring |
+| GET | `/api/evidence/:submissionId` | owner, operator, auditor | Submission status, reasons, scores, tx hash |
+| POST | `/api/operator/submissions/:id/review` | operator | Approve or reject a `needs_review` submission |
 
 ---
 
@@ -299,9 +303,172 @@ Visible to the user who created the job and to operators. Anyone else gets 404, 
 
 Job statuses: `pending` → `processing` → `sent` → `confirmed`, or `failed`. Operators also see `lastError`.
 
+### Evidence
+
+The full flow, prechecks and states are in [evidence-pipeline.md](evidence-pipeline.md). In short: announce the video, upload it, submit the signed payload, then poll `GET /api/evidence/:submissionId`. Scoring, policy and signing happen in the worker, so submit returns quickly.
+
+Precheck reason codes:
+
+| Code | Meaning |
+|---|---|
+| `device_unknown_or_revoked` | `deviceKey` is not a registered, active device |
+| `device_not_owned` | The device belongs to another planter |
+| `signature_invalid` | The signature does not verify against the device key |
+| `hash_mismatch` | SHA-256 of the stored file differs from the signed `videoSha256` |
+| `stale_capture`, `future_capture` | Captured more than 72 hours ago, or more than 5 minutes in the future |
+| `gps_inaccurate` | `acc` above 30 m |
+| `outside_region` | PLANTED: outside the campaign radius |
+| `moved_tree` | Other kinds: more than 15 m from the tree's first location |
+| `duplicate_video` | The video hash was used before (rejected videos included) |
+| `milestone_not_open`, `milestone_already_done` | ALIVE: chain time outside the window, or the milestone is already paid or accepted. PLANTED: the slot is already planted |
+| `slot_not_owned`, `tree_not_owned` | The slot or tree is not the caller's wallet |
+| `challenge_missing` | An auditor challenge is active and the payload does not carry its code |
+| `video_too_short`, `video_too_long` | Recorder duration outside 4 to 12 seconds |
+| `campaign_not_active` | PLANTED on a campaign that is not active |
+| `wrong_tree_status` | ALIVE or DEAD on a tree that is not alive, REPLANTED on a tree that is not dead |
+| `replant_deadline_passed` | REPLANTED after the replant deadline |
+
+Reasons added later in the pipeline: the policy codes from `AI_SERVICE_INTERFACE.md` (`liveness_low`, `growth_borderline`, ...), `video_unreadable` (AI returned 422), `milestone_already_done` (another submission was attested first) and `operator_rejected`.
+
+### POST /api/evidence/upload-url
+
+Role: planter, with a wallet.
+
+```json
+{
+  "kind": "PLANTED",
+  "campaign": "0x...",
+  "slotId": "12",
+  "milestone": 0,
+  "sha256": "<lowercase hex>",
+  "sizeBytes": 4194304,
+  "durationSec": 7.2,
+  "contentType": "video/webm"
+}
+```
+
+`slotId` is required for PLANTED (milestone 0). Other kinds send `treeId` instead: ALIVE with milestone 1 to 5, DEAD and REPLANTED with milestone 0. `sizeBytes` is at most 25 MB. `durationSec` is optional. `contentType` is `video/mp4` (default), `video/webm` or `video/quicktime`.
+
+The target prechecks (campaign status, slot or tree ownership, tree status, milestone window and history, duration, duplicate video) run before anything is created, so a doomed video is never uploaded. Then a `queued` submission is created.
+
+**201**
+
+```json
+{
+  "submissionId": "uuid",
+  "uploadUrl": "https://<project>.supabase.co/storage/v1/object/upload/sign/evidence/<profile>/<submission>.webm?token=...",
+  "token": "...",
+  "path": "<profile>/<submission>.webm",
+  "expiresInSec": 7200,
+  "idempotent": false
+}
+```
+
+Upload the file with `PUT uploadUrl` (or `supabase.storage.from("evidence").uploadToSignedUrl(path, token, file)`). Asking again with the same SHA-256 and target while the submission is still `queued` returns the same submission with a fresh URL (**200**, `"idempotent": true`).
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `validation_error` | Bad body, wrong kind shape, file too large |
+| 403 | `forbidden_role`, `wallet_missing` | |
+| 404 | `not_found` | Unknown campaign, or tree not in this campaign |
+| 422 | `precheck_failed` | `details.reasons` lists every failing reason |
+
+### POST /api/evidence/:submissionId/submit
+
+Role: planter who owns the submission.
+
+```json
+{
+  "payload": { "v": 1, "kind": "PLANTED", "campaign": "0x...", "slotId": "12", "treeId": null, "milestone": 0, "videoSha256": "...", "lat": -6.2, "lon": 106.816666, "acc": 8.5, "capturedAt": "2026-10-20T03:15:00.000Z", "challenge": null, "deviceKey": "<jwk thumbprint>" },
+  "canonical": "{\"v\":1,\"kind\":\"PLANTED\",...}",
+  "signature": "<base64url P1363>"
+}
+```
+
+Steps: check the payload matches the announced upload and `canonical == canonicalize(payload)`, download the stored file and recompute its SHA-256, verify the device and signature, run every precheck, store the payload, signature and `evidenceHash`, then enqueue a `score` job (status `checking`).
+
+**202**
+
+```json
+{ "submissionId": "uuid", "status": "checking", "reasons": [], "policyScore": null, "jobId": "uuid", "idempotent": false }
+```
+
+**422** when prechecks fail. The submission becomes `rejected`:
+
+```json
+{ "submissionId": "uuid", "status": "rejected", "reasons": ["gps_inaccurate", "outside_region"], "policyScore": null, "jobId": null, "idempotent": false, "error": { "code": "evidence_rejected", "message": "Evidence was rejected", "details": { "reasons": ["gps_inaccurate", "outside_region"] } } }
+```
+
+Idempotent per submission: once it has left `queued`, the same request returns its current state (**200**, or **422** if rejected) with `"idempotent": true` and runs nothing again.
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `validation_error` | Payload fails its schema |
+| 400 | `payload_mismatch` | Payload kind, campaign, slot, tree, milestone or hash differs from the upload (`details.fields`) |
+| 400 | `canonical_mismatch` | `canonical` is not the canonical form of `payload` |
+| 404 | `not_found` | Unknown submission, or someone else's |
+| 409 | `video_not_uploaded` | Nothing stored at the upload path yet. The submission stays `queued` |
+| 409 | `submission_in_progress` | A concurrent submit is running |
+| 422 | `evidence_rejected` | See above |
+
+### GET /api/evidence/:submissionId
+
+Visible to the planter who submitted it, operators and auditors. Anyone else gets 404. Exact GPS is not included.
+
+**200**
+
+```json
+{
+  "submission": {
+    "id": "uuid",
+    "kind": "ALIVE",
+    "campaign": "0x...",
+    "slotId": null,
+    "treeId": 42,
+    "milestone": 1,
+    "status": "attested",
+    "reasons": [],
+    "policyDecision": "pass",
+    "policyScore": 9230,
+    "scores": { "liveness": 0.93, "recapture": 0.04, "treePresence": 0.95, "...": "..." },
+    "modelVersion": "treecord-ai-0.1.0",
+    "evidenceHash": "0x...",
+    "attestation": { "nonce": "...", "expiry": "1793000000", "digest": "0x..." },
+    "txHash": null,
+    "jobId": "uuid",
+    "review": null,
+    "capturedAt": "...",
+    "receivedAt": "...",
+    "updatedAt": "..."
+  }
+}
+```
+
+Statuses: `queued` → `uploaded` → `checking` → `scored` → `attested` → `onchain`, or `rejected`, `needs_review`, `failed`. `jobId` is the latest score or attestation job.
+
+### POST /api/operator/submissions/:id/review
+
+Role: operator.
+
+```json
+{ "approve": true, "note": "Seedling clearly visible, camera shake explains liveness." }
+```
+
+Only for `needs_review` submissions. Approve checks the tree status and milestone window again with chain time, signs the attestation and enqueues the `attestation` job. Reject sets `rejected` and appends `operator_rejected`. The policy's own decision and reasons are kept.
+
+**200** `{ "submission": Submission, "idempotent": false }`. Repeating the same decision returns **200** with `"idempotent": true`.
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `validation_error` | Missing note |
+| 403 | `forbidden_role` | |
+| 404 | `not_found` | |
+| 409 | `not_in_review` | The submission is not in `needs_review` (`details.status`) |
+| 409 | `cannot_attest` | The tree status or milestone window no longer allows it (`details.reasons`). Reject instead |
+
 ## Testing
 
-Route tests live in `apps/web/test/api` and run against the local Supabase stack (`pnpm db:start`), with Privy replaced by a test identity provider. Without a running database they are skipped with a warning.
+Route tests live in `apps/web/test/api` and run against the local Supabase stack (`pnpm db:start`), with Privy replaced by a test identity provider and chain time following the wall clock. Without a running database they are skipped with a warning. Precheck unit tests (`apps/web/test/precheck.test.ts`) need nothing running.
 
 ```sh
 pnpm db:start

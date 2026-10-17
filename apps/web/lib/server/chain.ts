@@ -28,6 +28,28 @@ export function getChainDeployment(): TreecordDeployment {
   return getDeployment(getServerEnv().CHAIN_ID);
 }
 
+type ChainClock = () => Promise<number>;
+
+const blockClock: ChainClock = async () => {
+  const block = await getPublicClient().getBlock({ blockTag: "latest" });
+  return Number(block.timestamp);
+};
+
+let clock: ChainClock = blockClock;
+
+/**
+ * Chain time in seconds (latest block timestamp). Milestone windows and attestation expiry use chain time,
+ * because that is what the contracts compare against (PRODUCT_KNOWLEDGE.md section 15, rule 4).
+ */
+export function getChainNow(): Promise<number> {
+  return clock();
+}
+
+/** Test hook: replaces the chain clock. Pass null to restore the real one. */
+export function setChainClock(next: ChainClock | null): void {
+  clock = next ?? blockClock;
+}
+
 /** Typed Campaign contract instance. */
 export function campaignContract(address: Address) {
   return getContract({ address, abi: campaignAbi, client: getPublicClient() });

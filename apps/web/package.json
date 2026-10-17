@@ -15,6 +15,7 @@
     "@next/env": "16.4.2",
     "@privy-io/node": "0.35.0",
     "@supabase/supabase-js": "2.118.0",
+    "@treecord/pipeline": "workspace:*",
     "@treecord/shared": "workspace:*",
     "next": "16.4.2",
     "react": "19.3.1",

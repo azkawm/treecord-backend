@@ -1,8 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { CARBON_RIGHTS_AGREEMENT_VERSION, type EcPublicJwk } from "@treecord/shared";
+import { MockAiClient, type Logger, type ScoreDeps } from "@treecord/pipeline";
+import { CARBON_RIGHTS_AGREEMENT_VERSION, type EcPublicJwk, type Json } from "@treecord/shared";
 import { keccak256, stringToBytes } from "viem";
+import { getAttester } from "@/lib/server/attester";
+import { getChainNow, setChainClock } from "@/lib/server/chain";
 import { setIdentityProvider, type IdentityProvider } from "@/lib/server/identity";
 import { getSupabase } from "@/lib/server/supabase";
+import { newDevice, type TestDevice } from "./helpers-crypto";
 
 // ---------------------------------------------------------------------------
 // Database availability
@@ -33,6 +37,17 @@ if (!dbAvailable) {
     `\n⚠ Skipping API route tests: no Supabase at ${process.env.SUPABASE_URL}. Run \`pnpm db:start\` to include them.\n`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Chain time
+// ---------------------------------------------------------------------------
+
+export function nowSec(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
+// Route tests run without anvil: chain time follows the wall clock.
+setChainClock(async () => nowSec());
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -186,6 +201,74 @@ export async function assignSlots(
       })),
     );
   if (error) throw error;
+}
+
+export interface TreeFixture {
+  campaign: string;
+  planter: string;
+  slotId?: number;
+  status?: "alive" | "flagged" | "dead" | "removed" | "completed";
+  plantedAtSec?: number;
+  exact?: { lat: number; lon: number } | null;
+  replantDeadlineSec?: number | null;
+}
+
+/** Inserts a tree as the indexer would after TreePlanted. Returns its id. */
+export async function createTree(fixture: TreeFixture): Promise<number> {
+  const treeId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  const exact = fixture.exact === undefined ? { lat: -6.2, lon: 106.816666 } : fixture.exact;
+  const { error } = await getSupabase()
+    .from("trees")
+    .insert({
+      tree_id: treeId,
+      campaign_address: fixture.campaign,
+      slot_id: fixture.slotId ?? 1,
+      planter_address: fixture.planter,
+      status: fixture.status ?? "alive",
+      planted_at: new Date((fixture.plantedAtSec ?? nowSec()) * 1000).toISOString(),
+      geohash: "qqguwvt",
+      exact_lat: exact?.lat ?? null,
+      exact_lon: exact?.lon ?? null,
+      replant_deadline:
+        fixture.replantDeadlineSec == null
+          ? null
+          : new Date(fixture.replantDeadlineSec * 1000).toISOString(),
+      latest_evidence_hash: randomHash(),
+      planted_tx: randomHash(),
+    });
+  if (error) throw error;
+  return treeId;
+}
+
+// ---------------------------------------------------------------------------
+// Evidence
+// ---------------------------------------------------------------------------
+
+/** Generates a device keypair and registers its public key for the user, as POST /api/devices would. */
+export async function registerDevice(user: TestUser): Promise<TestDevice> {
+  const device = await newDevice();
+  const { error } = await getSupabase()
+    .from("devices")
+    .insert({
+      profile_id: user.profileId,
+      public_key_jwk: device.jwk as unknown as { [key: string]: Json },
+      thumbprint: device.thumbprint,
+    });
+  if (error) throw error;
+  return device;
+}
+
+const silentLogger: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+
+/** What the worker passes to processScoreJob, with the mock AI. */
+export function scoreDeps(ai = new MockAiClient()): ScoreDeps {
+  return {
+    db: getSupabase(),
+    attester: getAttester(),
+    chainNow: getChainNow,
+    ai,
+    log: silentLogger,
+  };
 }
 
 // ---------------------------------------------------------------------------

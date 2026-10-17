@@ -50,6 +50,9 @@ importers:
       '@supabase/supabase-js':
         specifier: 2.118.0
         version: 2.118.0
+      '@treecord/pipeline':
+        specifier: workspace:*
+        version: link:../../packages/pipeline
       '@treecord/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -122,6 +125,25 @@ importers:
       tsx:
         specifier: 4.23.15
         version: 4.23.15
+
+  packages/pipeline:
+    dependencies:
+      '@supabase/supabase-js':
+        specifier: 2.118.0
+        version: 2.118.0
+      '@treecord/shared':
+        specifier: workspace:*
+        version: link:../shared
+      viem:
+        specifier: 2.57.7
+        version: 2.57.7(typescript@6.0.3)(zod@4.6.7)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/shared:
     dependencies:
@@ -2216,7 +2238,7 @@ snapshots:
 
   '@scure/bip32@1.7.0':
     dependencies:
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
 

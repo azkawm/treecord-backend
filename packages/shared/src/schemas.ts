@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   DEFAULT_PER_PLANTER_CAP,
   EVIDENCE_KINDS,
+  EVIDENCE_VIDEO_TYPES,
   EVIDENCE_PAYLOAD_VERSION,
   MAX_VIDEO_BYTES,
   MILESTONE_COUNT,
@@ -152,6 +153,7 @@ export const evidenceUploadUrlRequestSchema = z
     sizeBytes: z.number().int().positive().max(MAX_VIDEO_BYTES),
     /** Duration from the recorder's metadata, checked against the 4 to 12 second server window. */
     durationSec: z.number().positive().max(600).optional(),
+    contentType: z.enum(EVIDENCE_VIDEO_TYPES).default("video/mp4"),
   })
   .strict()
   .superRefine(checkKindShape);

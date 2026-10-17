@@ -72,6 +72,8 @@ export const SERVER_VIDEO_MIN_SEC = 4;
 export const SERVER_VIDEO_MAX_SEC = 12;
 /** Maximum upload size. */
 export const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
+/** Video types accepted by the evidence bucket. MediaRecorder produces webm on Android and mp4 on iOS. */
+export const EVIDENCE_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"] as const;
 /** Devices a planter may have active at once. */
 export const MAX_ACTIVE_DEVICES = 3;
 /** Canonical evidence payload version. */

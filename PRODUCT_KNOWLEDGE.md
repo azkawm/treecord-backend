@@ -249,6 +249,7 @@ treecord/
 │   └── ai/                     # FastAPI scorer (teammate)
 ├── packages/
 │   ├── contracts/              # Foundry: src, test, script
+│   ├── pipeline/               # server-only evidence pipeline shared by web and worker: AI client, attester, score job
 │   └── shared/                 # ABIs, addresses, EIP-712 types, canonical payload, constants, zod schemas
 ├── supabase/
 │   ├── migrations/
