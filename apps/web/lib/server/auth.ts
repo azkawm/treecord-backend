@@ -76,6 +76,14 @@ export async function authenticate(request: Request): Promise<AuthContext> {
   return { profile, wallet: (profile.wallet_address as `0x${string}` | null) ?? null };
 }
 
+/**
+ * For public endpoints that show more to some callers: authenticates when a bearer token is sent,
+ * returns null when none is. An invalid token is still a 401 rather than a silent downgrade.
+ */
+export async function authenticateOptional(request: Request): Promise<AuthContext | null> {
+  return request.headers.has("authorization") ? authenticate(request) : null;
+}
+
 /** Authenticates and requires one of the given roles. */
 export async function requireRole(request: Request, ...roles: Role[]): Promise<AuthContext> {
   const auth = await authenticate(request);

@@ -52,6 +52,25 @@ Next.js route handlers in `apps/web/app/api`. All bodies and responses are JSON.
 | POST | `/api/evidence/:submissionId/submit` | planter (owner) | Submit the signed payload, run prechecks, queue scoring |
 | GET | `/api/evidence/:submissionId` | owner, operator, auditor | Submission status, reasons, scores, tx hash |
 | POST | `/api/operator/submissions/:id/review` | operator | Approve or reject a `needs_review` submission |
+| GET | `/api/donor/dashboard` | donor, operator | Contributed campaigns: share, tree health, payouts, carbon, open flags |
+| GET | `/api/trees/:treeId` | public (more for planter, operator, auditor) | Tree timeline, milestones, payouts, flags |
+| POST | `/api/flags` | contributor of the tree's campaign | Store a flag reason and get its hash for `TreeRegistry.flag` |
+| POST | `/api/operator/flags/:id/resolve` | operator | Uphold or dismiss an on-chain flag |
+| GET | `/api/reports/campaign/:address` | public | Campaign impact report |
+| GET | `/api/planter/trees` | planter | My trees with milestone windows and amounts |
+| GET | `/api/planter/challenges` | planter | Open challenges on my trees |
+| POST | `/api/audit/sessions` | auditor | Open a session with a reproducible random sample |
+| GET | `/api/audit/sessions/:id` | auditor (owner) | Session, sample, findings, challenges |
+| GET | `/api/audit/sessions/:id/trees/:treeId` | auditor (owner) | Full evidence bundle for a sampled tree (logged) |
+| POST | `/api/audit/sessions/:id/challenges` | auditor (owner) | Issue a "prove it now" challenge |
+| POST | `/api/audit/sessions/:id/findings` | auditor (owner) | Record a finding for a sampled tree |
+| POST | `/api/audit/sessions/:id/close` | auditor (owner) | Build and hash the report, close the session |
+| GET | `/api/audit/sessions/:id/reproduce` | public | Inputs and check for recomputing the sample |
+| POST | `/api/operator/carbon/estimate` | operator | Compute and set the pre-certification estimate |
+| POST | `/api/operator/carbon/issue` | operator | Mirror a registry issuance on-chain |
+| GET | `/api/carbon/batches` | public | Issued batches with inventory |
+| GET | `/api/carbon/holdings` | any | My reservations, balances and retirements |
+| GET | `/api/carbon/retirements/:id` | public | Retirement certificate |
 
 ---
 
@@ -466,9 +485,410 @@ Only for `needs_review` submissions. Approve checks the tree status and mileston
 | 409 | `not_in_review` | The submission is not in `needs_review` (`details.status`) |
 | 409 | `cannot_attest` | The tree status or milestone window no longer allows it (`details.reasons`). Reject instead |
 
+### Donors and trees
+
+### GET /api/donor/dashboard
+
+Role: donor or operator, with a wallet. Covers every campaign the wallet contributed to.
+
+**200**
+
+```json
+{
+  "wallet": "0x...",
+  "campaigns": [
+    {
+      "campaign": { "address": "0x...", "title": "...", "status": "active", "species": { "code": "...", "name": "..." }, "region": "Jakarta", "treeTarget": 10, "fundingTarget": "20000000", "raised": "20000000" },
+      "contributed": "6000000",
+      "refunded": "0",
+      "fundingShareBps": 3000,
+      "trees": { "planted": 4, "alive": 1, "flagged": 1, "dead": 1, "removed": 1, "completed": 0, "survivalRateBps": 5000 },
+      "payoutsReleased": "17500000",
+      "carbon": {
+        "campaignEstimate": { "label": "pre-certification", "units": "67", "tonnes": "0.067" },
+        "reserved": { "label": "pre-certification", "units": "20", "tonnes": "0.020", "declined": false },
+        "issued": { "label": "issued", "allocatedUnits": "5", "heldUnits": "5", "heldTonnes": "0.005" }
+      },
+      "openFlags": [{ "id": "uuid", "treeId": 42, "status": "open", "reasonText": "...", "createdAt": "...", "openedAt": "..." }]
+    }
+  ],
+  "totals": { "campaigns": 1, "contributed": "6000000", "treesPlanted": 4, "survivalRateBps": 5000, "payoutsReleased": "17500000", "openFlags": 1 }
+}
+```
+
+Survival rate is (alive + flagged + completed) / planted, in basis points, or null before any planting. Open flags include `pending` ones (text stored, not yet sent on-chain).
+
+### GET /api/trees/:treeId
+
+Public. A bearer token is optional. The tree's planter, operators and auditors get the exact GPS. Everyone else gets the center of the precision-7 geohash cell (`location.precision` says which).
+
+**200**
+
+```json
+{
+  "tree": {
+    "treeId": 42, "campaign": { "address": "0x...", "title": "...", "species": { "code": "...", "name": "..." }, "region": "Jakarta" },
+    "slotId": 3, "planter": "0x...", "status": "alive", "plantedAt": "...",
+    "location": { "precision": "geohash", "lat": -6.2004, "lon": 106.8164, "geohash": "qqguwvt" },
+    "replantDeadline": null, "pausedSeconds": 0, "checkInCount": 1, "latestEvidenceHash": "0x...",
+    "plantedTx": { "hash": "0x...", "url": "https://sepolia.basescan.org/tx/0x..." }
+  },
+  "timeline": [
+    { "type": "check_in", "at": "...", "blockNumber": 1234, "tx": { "hash": "0x...", "url": "..." }, "evidenceHash": "0x...", "data": { "checkInCount": 1 },
+      "evidence": { "kind": "ALIVE", "milestone": 1, "score": 9230, "thumbnailUrl": "https://.../keyframes/...?token=..." } }
+  ],
+  "milestones": [{ "milestone": 1, "opensAt": "...", "closesAt": "...", "amount": "1000000", "state": "open" }],
+  "payouts": [{ "milestone": 0, "amount": "1000000", "planter": "0x...", "at": "...", "tx": { "hash": "0x...", "url": "..." } }],
+  "forfeits": [],
+  "flags": [{ "id": "uuid", "status": "dismissed", "reasonText": "...", "reasonHash": "0x...", "resolutionNote": "...", "openedAt": "...", "openedTx": "0x...", "resolvedAt": "...", "resolvedTx": "0x..." }]
+}
+```
+
+Timeline types: `planted`, `check_in`, `died`, `replanted`, `removed`, `flagged`, `flag_resolved`, `completed`. Thumbnails are 15 minute signed URLs. Milestone states: `paid`, `forfeited`, `upcoming`, `open`, `missed` (window closed, forfeit not mirrored yet). Windows use chain time and include paused seconds. Transaction URLs are null on a local chain. Flags appear once they are on-chain.
+
+Errors: 400 `invalid_path`, 401 for an invalid token (a missing token is fine), 404.
+
+### POST /api/flags
+
+Any role, with a wallet that contributed to the tree's campaign (the same rule `TreeRegistry.flag` enforces).
+
+```json
+{ "treeId": "42", "reasonText": "The video shows a different tree than last month" }
+```
+
+`reasonText` is 10 to 2000 characters. The text is stored as a `pending` flag and the response gives `reasonHash = keccak256(utf8(reasonText))`. The contributor then calls `TreeRegistry.flag(treeId, reasonHash)` from their own wallet. The indexer links the `TreeFlagged` event to this row by `reasonHash` and the flag becomes `open`.
+
+**201**
+
+```json
+{
+  "flag": { "id": "uuid", "treeId": 42, "status": "pending", "reasonText": "...", "reasonHash": "0x...", "createdAt": "..." },
+  "reasonHash": "0x...",
+  "call": { "contract": "<TreeRegistry>", "function": "flag(uint256,bytes32)", "args": ["42", "0x..."] },
+  "idempotent": false
+}
+```
+
+Sending the same text again returns the same pending flag (**200**, `"idempotent": true`).
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `validation_error` | Bad tree id or text length |
+| 403 | `not_contributor` | The wallet did not contribute to this campaign |
+| 403 | `wallet_missing` | |
+| 404 | `not_found` | Unknown tree |
+| 409 | `tree_not_flaggable` | The tree is not alive or dead (a flagged tree already has an active flag) |
+
+### POST /api/operator/flags/:id/resolve
+
+Role: operator.
+
+```json
+{ "uphold": false, "note": "Site visit confirmed the tree is alive and in place" }
+```
+
+For `open` (on-chain) flags. Stores the note and enqueues a `resolve_flag` job with payload `{ "treeId", "uphold", "noteHash" }`, where `noteHash = keccak256(utf8(note))`. Upholding removes the tree on-chain. Dismissing restores its status and adds the flagged time to its schedule. The flag's status changes when the indexer sees `FlagResolved`.
+
+**202** `{ "flag": { "id", "status" }, "job": Job, "idempotent": false }`. Repeating the same decision returns the same job (**200**, `"idempotent": true`). If the earlier job failed, the same job is queued again with the new decision.
+
+| Status | Code | When |
+|---|---|---|
+| 403 | `forbidden_role` | |
+| 404 | `not_found` | |
+| 409 | `flag_not_open` | The flag is still `pending` (not on-chain) or already resolved (`details.status`) |
+| 409 | `flag_resolution_pending` | A different decision is already queued |
+
+### GET /api/reports/campaign/:address
+
+Public. The impact report as JSON. A PDF rendering will use the same data.
+
+**200**
+
+```json
+{
+  "report": {
+    "generatedAt": "...",
+    "campaign": Campaign,
+    "funding": { "target": "20000000", "raised": "20000000", "contributors": 3, "refunded": "0" },
+    "trees": { "planted": 10, "alive": 8, "flagged": 0, "dead": 1, "removed": 1, "completed": 0, "survivalRateBps": 8000, "averageAgeDays": 412 },
+    "incentives": { "paid": "...", "forfeited": "...", "byMilestone": [{ "milestone": 0, "payouts": 10, "amount": "..." }] },
+    "carbon": {
+      "estimate": { "label": "pre-certification", "units": "54", "tonnes": "0.054", "method": EstimateMethod },
+      "issued": { "label": "issued", "units": "2000", "tonnes": "2.000", "retiredUnits": "0", "batches": [{ "batchId": 1, "registry": "SRN-PPI", "serialStart": "...", "serialEnd": "...", "vintage": 2027, "units": "2000", "tonnes": "2.000", "tx": { "hash": "0x...", "url": "..." } }] }
+    },
+    "evidence": [{ "treeId": 42, "event": "planted", "evidenceHash": "0x...", "blockNumber": 1234, "at": "...", "tx": { "hash": "0x...", "url": "..." } }]
+  }
+}
+```
+
+`evidence` lists every on-chain event that carries an evidence hash, so anyone can check them against the chain. `method` is what `POST /api/operator/carbon/estimate` stored (see below), or null.
+
+### Planters
+
+### GET /api/planter/trees
+
+Role: planter, with a wallet.
+
+**200**
+
+```json
+{
+  "chainTime": "...",
+  "trees": [
+    {
+      "treeId": 42, "campaign": { "address": "0x...", "title": "...", "status": "active" }, "slotId": 3, "status": "alive",
+      "plantedAt": "...", "location": { "precision": "exact", "lat": -6.2, "lon": 106.816666, "geohash": "qqguwvt" },
+      "replantDeadline": null, "checkInCount": 0,
+      "nextMilestone": { "milestone": 1, "opensAt": "...", "closesAt": "...", "amount": "1000000", "state": "upcoming" },
+      "milestones": [MilestoneView]
+    }
+  ]
+}
+```
+
+`nextMilestone` is the first milestone still `upcoming` or `open`, or null when the tree is not alive. Amounts follow `Campaign.milestoneAmount`: milestones 0 to 4 pay their share of the per-tree incentive, milestone 5 the remainder.
+
+### GET /api/planter/challenges
+
+Role: planter, with a wallet. Unexpired, unfulfilled challenges on the caller's trees, soonest expiry first.
+
+**200** `{ "challenges": [{ "id": "uuid", "treeId": 42, "campaign": "0x...", "code": "K7Q2", "issuedAt": "...", "expiresAt": "..." }] }`
+
+The next check-in for that tree must carry the code in its signed payload (`challenge`), or it is rejected with `challenge_missing`.
+
+### Audit
+
+All session endpoints except `reproduce` need the auditor role and only work on the caller's own sessions. Another auditor's session is a 404.
+
+### POST /api/audit/sessions
+
+```json
+{ "campaign": "0x...", "sampleSize": 10 }
+```
+
+`sampleSize` is 1 to 100, capped at the population. The population is the campaign's trees that are not removed, sorted by id and frozen with the session. The server reads the latest block and computes:
+
+- `seed = keccak256(utf8(sessionId) ‖ blockHash)`, with the session id as the lowercase UUID text
+- Fisher-Yates over the sorted population, from the last index down: draw `i` is `keccak256(seed ‖ uint256(i)) mod (i + 1)`
+- the sample is the first `sampleSize` items
+
+The algorithm is `sampleTreeIds` in `packages/shared/src/audit.ts`, so anyone can run it.
+
+**201** `{ "session": Session }`
+
+```json
+{
+  "id": "uuid", "campaign": "0x...", "status": "open",
+  "seed": { "seed": "0x...", "blockNumber": 4242, "blockHash": "0x..." },
+  "populationSize": 7, "sampleSize": 4,
+  "samples": [{ "position": 0, "treeId": 42, "finding": null, "notes": null, "recordedAt": null, "tree": { "status": "alive", "geohash": "qqguwvt", "checkInCount": 2 } }],
+  "challenges": [], "reportHash": null, "report": null, "createdAt": "...", "closedAt": null
+}
+```
+
+Errors: 400 `validation_error`, 403 `forbidden_role`, 404 unknown campaign, 409 `no_trees`.
+
+### GET /api/audit/sessions/:id
+
+**200** `{ "session": Session }`
+
+### GET /api/audit/sessions/:id/trees/:treeId
+
+The full evidence bundle for a sampled tree. Every call is written to `audit_access_log` before anything is returned. Refused calls (tree not sampled, someone else's session) are not logged and return 404.
+
+**200**
+
+```json
+{
+  "sessionId": "uuid",
+  "sample": { "position": 0, "treeId": 42, "finding": null, "notes": null, "recordedAt": null },
+  "tree": { "treeId": 42, "location": { "precision": "exact", "...": "..." }, "...": "..." },
+  "submissions": [
+    {
+      "id": "uuid", "kind": "PLANTED", "milestone": 0, "status": "onchain",
+      "video": { "path": "...", "sha256": "...", "sizeBytes": 4194304, "durationSec": 7.2, "url": "<15 minute signed URL>" },
+      "payload": EvidencePayload, "canonical": "...", "signature": "...",
+      "device": { "id": "uuid", "thumbprint": "...", "revokedAt": null },
+      "verification": { "checkedAt": "...", "signatureValid": true, "canonicalMatchesPayload": true, "evidenceHashMatches": true, "videoHashMatches": true, "recomputedSha256": "..." },
+      "evidenceHash": "0x...", "ai": AiScoreResponse, "keyframeUrls": ["..."],
+      "policy": { "decision": "pass", "score": 9230, "rejectReasons": [] },
+      "review": null, "attestation": SignedAttestationRecord, "tx": { "hash": "0x...", "url": "..." }
+    }
+  ],
+  "events": [TimelineEvent],
+  "payouts": [Payout]
+}
+```
+
+`verification` is recomputed on every call: the device signature over `canonical`, `canonical == canonicalize(payload)`, `evidenceHash == keccak256(canonical ‖ signature)`, and the SHA-256 of the stored video against the signed hash. A check that cannot run (no signed payload yet, video missing) is null.
+
+### POST /api/audit/sessions/:id/challenges
+
+```json
+{ "treeId": "42" }
+```
+
+Issues a random 4-character code (A to Z, 0 to 9) for a sampled, alive tree. It expires in 2 campaign time units. The planter sees it in `GET /api/planter/challenges`.
+
+**201** `{ "challenge": { "id": "uuid", "treeId": 42, "code": "K7Q2", "issuedAt": "...", "expiresAt": "...", "fulfilledSubmissionId": null } }`
+
+| Status | Code | When |
+|---|---|---|
+| 404 | `not_found` | Tree not in the sample |
+| 409 | `session_closed` | |
+| 409 | `challenge_active` | The tree already has an open challenge (`details.challengeId`, `details.expiresAt`) |
+| 409 | `tree_not_alive` | (`details.status`) |
+
+### POST /api/audit/sessions/:id/findings
+
+```json
+{ "treeId": "42", "finding": "issue", "notes": "Tree not found at the recorded spot" }
+```
+
+`finding` is `ok`, `issue` or `needs_followup`. Recording again replaces the earlier finding.
+
+**200** `{ "sample": { "position": 0, "treeId": 42, "finding": "issue", "notes": "...", "recordedAt": "..." } }`
+
+Errors: 404 tree not in the sample, 409 `session_closed`.
+
+### POST /api/audit/sessions/:id/close
+
+```json
+{ "summary": "One tree missing, one to revisit" }
+```
+
+Every sampled tree needs a finding. Builds the report (session, campaign, auditor, seed inputs and algorithm, population, findings, totals, challenges, summary, close time), stores `reportHash = keccak256(canonical JSON)` (keys sorted at every level, `reportHash` in `packages/shared/src/audit.ts`), and closes the session.
+
+**200** `{ "session": Session, "idempotent": false }`. Closing a closed session returns it with `"idempotent": true`.
+
+Errors: 409 `findings_incomplete` (`details.missing` lists tree ids).
+
+### GET /api/audit/sessions/:id/reproduce
+
+Public, no token needed.
+
+**200**
+
+```json
+{
+  "sessionId": "uuid", "campaign": "0x...", "blockNumber": "4242", "blockHash": "0x...", "seed": "0x...",
+  "algorithm": "seed = keccak256(utf8(sessionId) ++ blockHash). ...",
+  "population": ["40", "41", "42"], "sampleSize": 2, "sample": ["42", "40"],
+  "check": { "seedMatches": true, "recomputedSample": ["42", "40"], "sampleMatches": true },
+  "status": "closed", "reportHash": "0x..."
+}
+```
+
+The block hash can be checked against any node, and the population against the `TreePlanted` events up to that block.
+
+### Carbon
+
+Carbon amounts are units with 3 decimals (`"1000"` = 1 tCO2e). Every amount is labeled `pre-certification` (estimates and reservations) or `issued` (registry-backed credits).
+
+### POST /api/operator/carbon/estimate
+
+Role: operator. Supports `Idempotency-Key`.
+
+```json
+{ "campaign": "0x..." }
+```
+
+Computes the estimate from the species table, stores it in `campaigns.estimated_amount` with its method, and enqueues an `estimate` job (`CarbonLedger.setEstimate`, which sets each contributor's pro-rata reservation).
+
+The model (`estimateCarbon` in `packages/shared/src/carbon.ts`), in integer math rounded down:
+
+- tree count = the campaign's tree target minus removed trees
+- one campaign time unit stands for one month (30 days in production)
+- each tree grows linearly to the species' mature rate over `years_to_maturity`, using its age at the middle of each month
+- total kg = tree count × Σ over months m = 1..M of `kgCo2PerYearMature / 12 × min(1, (m − 0.5) / (12 × yearsToMaturity))`
+- 1 kg = 1 carbon unit
+
+Example: 8 mahogany trees (30 kg/yr at 20 years) over 36 months add 6.75 kg each, 54 units in total.
+
+**202**
+
+```json
+{
+  "estimate": {
+    "label": "pre-certification", "units": "54", "tonnes": "0.054",
+    "method": { "model": "linear-maturity-v1", "label": "pre-certification", "formula": "...", "kgCo2PerYearMature": "30.00", "yearsToMaturity": 20, "treeCount": 8, "commitmentMonths": 36, "averageMaturityBps": 750, "kgPerTree": "6.75", "species": { "code": "SWIETENIA_MACROPHYLLA", "name": "Swietenia macrophylla" }, "computedAt": "..." }
+  },
+  "job": Job,
+  "idempotent": false
+}
+```
+
+| Status | Code | When |
+|---|---|---|
+| 409 | `campaign_not_active` | The contract only accepts estimates while active |
+| 409 | `estimate_locked` | A batch was already issued |
+| 409 | `species_unknown` | No species, or not in the species table |
+
+### POST /api/operator/carbon/issue
+
+Role: operator. Send an `Idempotency-Key` so the same issuance is never mirrored twice.
+
+```json
+{ "campaign": "0x...", "registry": "SRN-PPI", "serialStart": "IDN-2027-000001", "serialEnd": "IDN-2027-012500", "vintage": 2027, "tonnes": "12.5" }
+```
+
+`tonnes` has at most 3 decimals. Enqueues an `issue` job (`CarbonLedger.issueBatch` from the operator wallet, which holds `ISSUER_ROLE`) with payload `{ "campaign", "registry", "serialStart", "serialEnd", "vintage", "amount" }`, amount in units. The ledger fills reservations pro rata and puts the rest in platform inventory.
+
+**202** `{ "issuance": { "units": "12500", "tonnes": "12.500" }, "job": Job, "idempotent": false }`
+
+Errors: 400 `validation_error`, 403, 404, 409 `campaign_not_issuable` (not active or completed).
+
+### GET /api/carbon/batches
+
+Public. Optional `?campaign=0x...`.
+
+**200** `{ "batches": [{ "batchId": 1, "label": "issued", "campaign": { "address": "0x...", "title": "...", "species": "...", "region": "..." }, "registry": "SRN-PPI", "serialStart": "...", "serialEnd": "...", "vintage": 2027, "units": "12500", "tonnes": "12.500", "priceUsdcPerTonne": "15000000", "inventory": { "units": "9500", "tonnes": "9.500" }, "issuedTx": { "hash": "0x...", "url": "..." }, "issuedAt": "..." }] }`
+
+`inventory` is what platform inventory (the ledger's own balance) still has for sale. `priceUsdcPerTonne` is null until set.
+
+### GET /api/carbon/holdings
+
+Any role, with a wallet.
+
+**200**
+
+```json
+{
+  "wallet": "0x...",
+  "reservations": [{ "campaign": "0x...", "label": "pre-certification", "reservedUnits": "4000", "allocatedUnits": "3000", "unfilledUnits": "1000", "unfilledTonnes": "1.000", "declined": false, "updatedAt": "..." }],
+  "balances": [{ "batchId": 1, "label": "issued", "campaign": "0x...", "registry": "SRN-PPI", "serialStart": "...", "serialEnd": "...", "vintage": 2027, "units": "3000", "tonnes": "3.000" }],
+  "retirements": [{ "retirementId": 1, "batchId": 1, "units": "500", "tonnes": "0.500", "beneficiary": "...", "purpose": "...", "retiredAt": "...", "registryRetirementStatus": "pending", "tx": { "hash": "0x...", "url": "..." } }]
+}
+```
+
+Planters get empty lists: they receive incentives, never carbon.
+
+### GET /api/carbon/retirements/:id
+
+Public certificate.
+
+**200**
+
+```json
+{
+  "certificate": {
+    "retirementId": 1, "units": "500", "tonnes": "0.500", "beneficiary": "PT Hijau Lestari", "purpose": "2026 scope 3 offset",
+    "retiredAt": "...", "holder": "0x...", "tx": { "hash": "0x...", "url": "..." },
+    "registryRetirement": { "status": "pending", "reference": null },
+    "batch": { "batchId": 1, "registry": "SRN-PPI", "serialStart": "...", "serialEnd": "...", "vintage": 2027, "units": "12500", "issuedTx": { "hash": "0x...", "url": "..." } },
+    "campaign": { "address": "0x...", "title": "...", "species": { "code": "...", "name": "..." }, "region": { "name": "Jakarta", "geohash": "qqguwvt" }, "treeTarget": 10 },
+    "trees": { "count": 10, "list": [{ "treeId": 42, "status": "alive", "geohash": "qqguwvt", "plantedAt": "..." }] }
+  }
+}
+```
+
+Trees show only the public geohash. `registryRetirement` tracks the matching retirement in the registry, which happens off-chain.
+
+Errors: 400 `invalid_path`, 404.
+
 ## Testing
 
-Route tests live in `apps/web/test/api` and run against the local Supabase stack (`pnpm db:start`), with Privy replaced by a test identity provider and chain time following the wall clock. Without a running database they are skipped with a warning. Precheck unit tests (`apps/web/test/precheck.test.ts`) need nothing running.
+Route tests live in `apps/web/test/api` and run against the local Supabase stack (`pnpm db:start`), with Privy replaced by a test identity provider, chain time following the wall clock, and a fixed latest block for audit seeds. Without a running database they are skipped with a warning. Precheck unit tests (`apps/web/test/precheck.test.ts`) need nothing running. Sampling, report hashing and the estimate math have unit tests in `packages/shared` (`audit.test.ts`, `carbon.test.ts`). Flag hash linking is tested on both sides: the API stores `keccak256(reasonText)` (`trees-flags.test.ts`), and the indexer links `TreeFlagged` by that hash (`apps/worker/src/indexer/apply.db.test.ts`).
 
 ```sh
 pnpm db:start

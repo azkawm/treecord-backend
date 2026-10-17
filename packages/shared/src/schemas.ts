@@ -1,4 +1,4 @@
-// zod schemas for API request bodies. Evidence and campaigns are defined now; prompts 7 to 10 add the rest.
+// zod schemas for API request bodies.
 import { z } from "zod";
 import {
   DEFAULT_PER_PLANTER_CAP,
@@ -266,3 +266,102 @@ export const anchorAssignRequestSchema = z
   })
   .strict();
 export type AnchorAssignRequest = z.infer<typeof anchorAssignRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Trees and flags
+// ---------------------------------------------------------------------------
+
+/** Tree ids are uint256 on-chain. The mirror stores them as bigint, so ids above 2^63 do not exist. */
+export const treeIdSchema = z
+  .string()
+  .regex(/^[1-9][0-9]{0,18}$/, "must be a positive decimal tree id")
+  // zod runs refinements even after the regex failed, so only parse digits.
+  .refine(
+    (value) => !/^\d+$/.test(value) || BigInt(value) <= 9_223_372_036_854_775_807n,
+    "tree id too large",
+  );
+
+/** POST /api/flags */
+export const flagCreateRequestSchema = z
+  .object({
+    treeId: treeIdSchema,
+    reasonText: z.string().trim().min(10).max(2000),
+  })
+  .strict();
+export type FlagCreateRequest = z.infer<typeof flagCreateRequestSchema>;
+
+/** POST /api/operator/flags/:id/resolve */
+export const flagResolveRequestSchema = z
+  .object({
+    uphold: z.boolean(),
+    note: z.string().trim().min(3).max(2000),
+  })
+  .strict();
+export type FlagResolveRequest = z.infer<typeof flagResolveRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+export const AUDIT_FINDINGS = ["ok", "issue", "needs_followup"] as const;
+
+/** POST /api/audit/sessions */
+export const auditSessionCreateRequestSchema = z
+  .object({
+    campaign: addressInputSchema,
+    sampleSize: z.number().int().min(1).max(100),
+  })
+  .strict();
+export type AuditSessionCreateRequest = z.infer<typeof auditSessionCreateRequestSchema>;
+
+/** POST /api/audit/sessions/:id/challenges */
+export const auditChallengeRequestSchema = z.object({ treeId: treeIdSchema }).strict();
+
+/** POST /api/audit/sessions/:id/findings */
+export const auditFindingRequestSchema = z
+  .object({
+    treeId: treeIdSchema,
+    finding: z.enum(AUDIT_FINDINGS),
+    notes: z.string().trim().max(5000).optional(),
+  })
+  .strict();
+export type AuditFindingRequest = z.infer<typeof auditFindingRequestSchema>;
+
+/** POST /api/audit/sessions/:id/close */
+export const auditCloseRequestSchema = z
+  .object({ summary: z.string().trim().max(5000).default("") })
+  .strict();
+
+// ---------------------------------------------------------------------------
+// Carbon
+// ---------------------------------------------------------------------------
+
+/** POST /api/operator/carbon/estimate */
+export const carbonEstimateRequestSchema = z.object({ campaign: addressInputSchema }).strict();
+
+/** Tonnes with up to 3 decimals, as a string so no float rounding touches it. */
+export const tonnesSchema = z
+  .string()
+  .regex(/^(0|[1-9][0-9]{0,17})(\.[0-9]{1,3})?$/, "must be tonnes with at most 3 decimals")
+  .refine((value) => /[1-9]/.test(value), "must be more than zero");
+
+/** POST /api/operator/carbon/issue: a registry issuance to mirror on-chain. */
+export const carbonIssueRequestSchema = z
+  .object({
+    campaign: addressInputSchema,
+    registry: z.string().trim().min(2).max(64),
+    serialStart: z.string().trim().min(1).max(200),
+    serialEnd: z.string().trim().min(1).max(200),
+    vintage: z.number().int().min(2000).max(2100),
+    tonnes: tonnesSchema,
+  })
+  .strict();
+export type CarbonIssueRequest = z.infer<typeof carbonIssueRequestSchema>;
+
+/** GET /api/carbon/batches query string. */
+export const carbonBatchesQuerySchema = z
+  .object({ campaign: addressInputSchema.optional() })
+  .strict();
+
+/** Retirement ids are sequential on-chain. */
+export const retirementIdSchema = z.string().regex(/^[1-9][0-9]{0,15}$/, "must be a positive id");

@@ -50,6 +50,39 @@ export function setChainClock(next: ChainClock | null): void {
   clock = next ?? blockClock;
 }
 
+export interface BlockRef {
+  number: bigint;
+  hash: `0x${string}`;
+}
+
+type BlockSource = () => Promise<BlockRef>;
+
+const latestBlock: BlockSource = async () => {
+  const block = await getPublicClient().getBlock({ blockTag: "latest" });
+  if (block.hash === null) throw new Error("Latest block has no hash");
+  return { number: block.number, hash: block.hash };
+};
+
+let blockSource: BlockSource = latestBlock;
+
+/** Number and hash of the latest block. Audit sample seeds use the hash. */
+export function getLatestBlock(): Promise<BlockRef> {
+  return blockSource();
+}
+
+/** Test hook: replaces the latest-block source. Pass null to restore the real one. */
+export function setLatestBlockSource(next: BlockSource | null): void {
+  blockSource = next ?? latestBlock;
+}
+
+/** Block explorer link for a transaction, or null on a local chain. */
+export function txUrl(txHash: string | null): string | null {
+  if (!txHash) return null;
+  return getServerEnv().CHAIN_ID === ANVIL_CHAIN_ID
+    ? null
+    : `https://sepolia.basescan.org/tx/${txHash}`;
+}
+
 /** Typed Campaign contract instance. */
 export function campaignContract(address: Address) {
   return getContract({ address, abi: campaignAbi, client: getPublicClient() });

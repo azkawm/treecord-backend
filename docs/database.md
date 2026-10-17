@@ -61,7 +61,7 @@ Writer legend: **API** = Next.js route handlers, **Worker** = indexer and relaye
 | Table | Purpose | Written by |
 |---|---|---|
 | `campaign_metadata` | Title, description, species, region and images uploaded before the factory call. Its id becomes the campaign `metadataURI` | API |
-| `campaigns` | Mirror of each campaign's config, status and funding, merged with its metadata. `estimated_amount` holds the pre-certification carbon estimate | Worker (chain fields), API (estimate) |
+| `campaigns` | Mirror of each campaign's config, status and funding, merged with its metadata. `estimated_amount` holds the pre-certification carbon estimate and `estimate_method` how it was computed | Worker (chain fields), API (estimate and method) |
 | `contributions` | `Contributed` events | Worker |
 | `refunds` | `Refunded` events | Worker |
 | `slots` | Slot ownership and status (`open`, `claimed`, `planted`, `anchor`) from claim, anchor assignment and planting events | Worker |
@@ -93,7 +93,7 @@ Writer legend: **API** = Next.js route handlers, **Worker** = indexer and relaye
 
 | Table | Purpose | Written by |
 |---|---|---|
-| `audit_sessions` | Auditor sessions scoped to a campaign: seed, seed block number and hash (so anyone can reproduce the sample), sample size, report and its hash | API |
+| `audit_sessions` | Auditor sessions scoped to a campaign: seed, seed block number and hash (so anyone can reproduce the sample), sample size, the frozen tree population (`population_tree_ids`), report and its hash | API |
 | `audit_samples` | Sampled trees in sample order, with the auditor's finding and notes | API |
 | `audit_access_log` | Every evidence access by an auditor. Append only: updates, deletes and truncates are rejected by triggers | API |
 

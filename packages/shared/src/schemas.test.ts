@@ -13,6 +13,9 @@ import {
   evidenceUploadUrlRequestSchema,
   isoTimestampMsSchema,
   usdcAmountSchema,
+  carbonIssueRequestSchema,
+  tonnesSchema,
+  treeIdSchema,
 } from "./schemas.js";
 
 const SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -231,5 +234,38 @@ describe("aiScoreResponseSchema", () => {
     expect(aiScoreResponseSchema.safeParse(bad).success).toBe(false);
     const { notes: _notes, ...withoutNotes } = response;
     expect(aiScoreResponseSchema.parse(withoutNotes).notes).toEqual([]);
+  });
+});
+
+describe("prompt 10 schemas", () => {
+  it("tree ids: positive integers that fit the bigint column, never a throw", () => {
+    expect(treeIdSchema.safeParse("42").success).toBe(true);
+    expect(treeIdSchema.safeParse("9223372036854775807").success).toBe(true);
+    expect(treeIdSchema.safeParse("9223372036854775808").success).toBe(false);
+    for (const bad of ["0", "-1", "abc", "1.5", "", "01"]) {
+      expect(() => treeIdSchema.safeParse(bad)).not.toThrow();
+      expect(treeIdSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it("tonnes: up to 3 decimals and more than zero", () => {
+    for (const ok of ["1", "12.5", "0.001", "1000000"])
+      expect(tonnesSchema.safeParse(ok).success).toBe(true);
+    for (const bad of ["0", "0.000", "1.2345", "-1", "1e3", "01"]) {
+      expect(tonnesSchema.safeParse(bad).success).toBe(false);
+    }
+    expect(
+      carbonIssueRequestSchema.safeParse({
+        campaign: "0x856E4424F806D16E8CBC702B3C0F2EDE5468EAE5",
+        registry: "SRN-PPI",
+        serialStart: "A-1",
+        serialEnd: "A-9",
+        vintage: 2027,
+        tonnes: "9",
+      }),
+    ).toMatchObject({
+      success: true,
+      data: { campaign: "0x856e4424f806d16e8cbc702b3c0f2ede5468eae5" },
+    });
   });
 });
