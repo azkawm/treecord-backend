@@ -130,6 +130,51 @@ export async function ensureAttestationJob(
   return { status: "attested", jobId, submission };
 }
 
+/**
+ * Re-signs an attested submission whose attestation expired before it reached the chain, with a fresh nonce
+ * and expiry, and points its relayer job at the new signature. An expired attestation can never be accepted
+ * (the gateway checks block.timestamp > expiry), so replacing it cannot cause a double submission.
+ * Returns null when the submission is no longer attested with `expiredNonce` (another worker re-signed it).
+ */
+export async function resignAttestation(
+  deps: AttestDeps,
+  submission: SubmissionRow,
+  expiredNonce: string,
+): Promise<{ record: SignedAttestationRecord; submission: SubmissionRow } | null> {
+  const record = await signFor(deps, submission);
+  const updated = ensureMaybe(
+    await deps.db
+      .from("submissions")
+      .update({
+        attestation: record as unknown as Json,
+        attestation_nonce: record.attestation.nonce as unknown as number,
+      })
+      .eq("id", submission.id)
+      .eq("status", "attested")
+      .eq("attestation_nonce", expiredNonce as unknown as number)
+      .select("id"),
+    "store re-signed attestation",
+  );
+  if (!updated || updated.length === 0) return null;
+
+  ensureMaybe(
+    await deps.db
+      .from("relayer_jobs")
+      .update({
+        payload: {
+          submissionId: submission.id,
+          nonce: record.attestation.nonce,
+          attestation: record.attestation as unknown as Json,
+          signature: record.signature,
+        },
+      })
+      .eq("idempotency_key", attestationJobKey(submission.id)),
+    "update attestation job",
+  );
+  const current = await mustLoad(deps.db, submission.id);
+  return { record, submission: current };
+}
+
 async function signFor(
   deps: AttestDeps,
   submission: SubmissionRow,

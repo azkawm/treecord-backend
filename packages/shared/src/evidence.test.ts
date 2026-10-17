@@ -3,10 +3,12 @@ import { concat, keccak256 } from "viem";
 import { describe, expect, it } from "vitest";
 import {
   base64UrlToBytes,
+  bytes8ToGeohash,
   bytesToBase64Url,
   canonicalBytes,
   canonicalize,
   computeEvidenceHash,
+  decodeGeohash,
   encodeGeohash,
   geohashToBytes8,
   haversineMeters,
@@ -231,6 +233,22 @@ describe("geohash", () => {
     expect(() => geohashToBytes8("qqguwvta")).toThrow(/character a/);
     expect(() => geohashToBytes8("123456789")).toThrow();
     expect(() => geohashToBytes8("")).toThrow();
+  });
+
+  it("reads bytes8 back and decodes a cell center", () => {
+    expect(bytes8ToGeohash("0x7171677577767400")).toBe("qqguwvt");
+    expect(bytes8ToGeohash("0x7330303030303030")).toBe("s0000000");
+    expect(() => bytes8ToGeohash("0x61")).toThrow();
+    expect(() => bytes8ToGeohash("0x6100000000000000")).toThrow(/character a/);
+
+    const center = decodeGeohash("qqguwvt");
+    expect(encodeGeohash(center.lat, center.lon, 7)).toBe("qqguwvt");
+    // A precision-7 cell is about 153 m wide, so its center is within 110 m of any point in it.
+    const jakarta = { lat: -6.2, lon: 106.816666 };
+    const cell = decodeGeohash(encodeGeohash(jakarta.lat, jakarta.lon, 7));
+    expect(haversineMeters(cell, jakarta)).toBeLessThan(110);
+    expect(decodeGeohash("s")).toEqual({ lat: 22.5, lon: 22.5 });
+    expect(() => decodeGeohash("qa")).toThrow();
   });
 });
 

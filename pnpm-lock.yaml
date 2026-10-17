@@ -93,6 +93,9 @@ importers:
       '@supabase/supabase-js':
         specifier: 2.118.0
         version: 2.118.0
+      '@treecord/pipeline':
+        specifier: workspace:*
+        version: link:../../packages/pipeline
       '@treecord/shared':
         specifier: workspace:*
         version: link:../../packages/shared

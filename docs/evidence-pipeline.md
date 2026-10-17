@@ -88,7 +88,8 @@ queued → uploaded → checking → scored → attested → onchain
 - `checking`: prechecks passed, the `score` job is queued.
 - `scored`: the AI response and keyframes are stored. A retried job resumes here without calling the AI again.
 - `attested`: the attestation is signed and the `attestation` job is queued.
-- `onchain` and `failed` after relaying are set by the worker in prompt 9.
+- `onchain`: the indexer saw `AttestationAccepted` with the submission's nonce. `tx_hash` is set when the relayer sends the transaction and confirmed by the event.
+- `failed` after `attested`: the relayer gave up on the attestation (a permanent revert such as `MilestoneAlreadySettled`, or every attempt used). `error` says why. If the attestation lands anyway, the indexer still moves it to `onchain`.
 
 `passed` exists in the enum but is not used: a passing submission is signed in the same step.
 
@@ -155,9 +156,14 @@ With `MOCK_AI=true` the worker uses `MockAiClient`: passing scores and one place
 
 The signed record (attestation, signature, EIP-712 digest, signer, chain id, gateway) is stored in `submissions.attestation`. The `attestation` relayer job has payload `{ submissionId, nonce, attestation, signature }` and idempotency key `attestation:<submissionId>`, so a retried step never queues it twice.
 
+### Relaying and expiry
+
+The worker relays attestation jobs as described in [worker.md](worker.md#relayer). If an attestation is within 30 seconds of its expiry before it was sent (for example after a long queue or an outage), the worker signs it again with a fresh nonce and expiry and updates both the submission and the job. An expired attestation can never be accepted, so the replacement cannot double up. A simulation that reverts with `NonceAlreadyUsed` means the attestation is already on-chain, so the job is confirmed without sending.
+
 ## Testing
 
 - `apps/web/test/precheck.test.ts`: every precheck reason, including boundaries.
 - `packages/pipeline/src/ai-client.test.ts`: retries, backoff, timeouts, error mapping, mock hooks.
 - `packages/pipeline/src/attester.test.ts`: signatures recover to the attester and match `hashAttestation`.
 - `apps/web/test/api/evidence.test.ts`: the full flow against local Supabase (database and storage). It uploads a real file, submits a payload signed by a WebCrypto device key, runs the score job with the mock, and checks that the queued attestation verifies against `hashAttestation` and recovers to the attester address.
+- `apps/worker/src/test/e2e.test.ts`: the worker scores a planting with the mock, relays the attestation to contracts on anvil, and the indexer mirrors the tree, the milestone 0 payout and the `onchain` status.

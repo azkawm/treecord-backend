@@ -223,6 +223,48 @@ export function geohashToBytes8(geohash: string): Hex {
   return `0x${bytesToHex(utf8(geohash)).padEnd(16, "0")}`;
 }
 
+/** Inverse of geohashToBytes8: the ASCII geohash without its zero padding. */
+export function bytes8ToGeohash(value: Hex): string {
+  if (!/^0x[0-9a-fA-F]{16}$/.test(value)) throw new Error("bytes8 must be 0x plus 16 hex digits");
+  let out = "";
+  for (let i = 2; i < 18; i += 2) {
+    const code = parseInt(value.slice(i, i + 2), 16);
+    if (code === 0) break;
+    out += String.fromCharCode(code);
+  }
+  for (const ch of out) {
+    if (!GEOHASH_ALPHABET.includes(ch)) throw new Error(`invalid geohash character ${ch}`);
+  }
+  return out;
+}
+
+/** Center of a geohash cell. */
+export function decodeGeohash(geohash: string): LatLon {
+  let latMin = -90;
+  let latMax = 90;
+  let lonMin = -180;
+  let lonMax = 180;
+  let evenBit = true; // longitude first
+  for (const ch of geohash) {
+    const index = GEOHASH_ALPHABET.indexOf(ch);
+    if (index < 0) throw new Error(`invalid geohash character ${ch}`);
+    for (let bit = 4; bit >= 0; bit--) {
+      const on = ((index >> bit) & 1) === 1;
+      if (evenBit) {
+        const mid = (lonMin + lonMax) / 2;
+        if (on) lonMin = mid;
+        else lonMax = mid;
+      } else {
+        const mid = (latMin + latMax) / 2;
+        if (on) latMin = mid;
+        else latMax = mid;
+      }
+      evenBit = !evenBit;
+    }
+  }
+  return { lat: (latMin + latMax) / 2, lon: (lonMin + lonMax) / 2 };
+}
+
 /** Mean Earth radius in meters (IUGG). */
 const EARTH_RADIUS_M = 6_371_008.8;
 

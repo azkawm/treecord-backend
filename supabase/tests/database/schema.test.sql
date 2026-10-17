@@ -1,7 +1,7 @@
 -- Database rule tests. Run with: pnpm db:test (supabase test db).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(33);
 
 -- ---------------------------------------------------------------------------
 -- Security
@@ -157,6 +157,8 @@ select throws_ok($$ delete from public.audit_access_log $$, '42501', null, 'acce
 -- Relayer jobs
 -- ---------------------------------------------------------------------------
 
+-- Start from an empty queue inside this rolled-back transaction, whatever other runs left behind.
+delete from public.relayer_jobs;
 insert into public.relayer_jobs (kind, payload) values ('attestation', '{"nonce":"7"}'), ('claim', '{"count":2}');
 select throws_ok(
   $$ insert into public.relayer_jobs (kind, payload) values ('attestation', '{"nonce":"7"}') $$,
@@ -177,6 +179,14 @@ select is(
   (select count(*)::int from public.claim_relayer_jobs(array['attestation']::public.relayer_job_kind[], 10, 'worker-2')),
   0,
   'a processing job is not claimed again while fresh'
+);
+
+-- The worker marks a job sent while it waits for the receipt. If it dies then, the job is reclaimed too.
+update public.relayer_jobs set status = 'sent', locked_at = now() - interval '10 minutes' where kind = 'attestation';
+select is(
+  (select count(*)::int from public.claim_relayer_jobs(array['attestation']::public.relayer_job_kind[], 10, 'worker-2')),
+  1,
+  'a stale sent job is claimed again'
 );
 
 select * from finish();

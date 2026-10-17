@@ -101,7 +101,7 @@ Writer legend: **API** = Next.js route handlers, **Worker** = indexer and relaye
 
 | Table | Purpose | Written by |
 |---|---|---|
-| `chain_cursor` | Last indexed block per indexer stream | Worker |
+| `chain_cursor` | Last indexed block per indexer stream (`indexer:<chainId>`) | Worker |
 | `relayer_jobs` | Queue of work for the worker: `score`, `attestation`, `claim`, `anchor_assign`, `estimate`, `issue`, `resolve_flag`. Tracks status, attempts, errors, tx hash and an optional idempotency key. An attestation nonce can be queued only once | API (enqueue), Worker (process) |
 
 ## Key constraints
@@ -120,7 +120,7 @@ Writer legend: **API** = Next.js route handlers, **Worker** = indexer and relaye
 
 ## Functions
 
-`claim_relayer_jobs(kinds, limit, worker, stale_after default 5 minutes)` claims due jobs with `FOR UPDATE SKIP LOCKED`, so several workers never take the same job. It marks them `processing`, records the worker and counts the attempt. Jobs stuck in `processing` longer than `stale_after`, for example after a crash, are claimed again. Only the service role can execute it.
+`claim_relayer_jobs(kinds, limit, worker, stale_after default 5 minutes)` claims due jobs with `FOR UPDATE SKIP LOCKED`, so several workers never take the same job. It marks them `processing`, records the worker and counts the attempt. Jobs stuck in `processing` or `sent` longer than `stale_after`, for example after a crash, are claimed again. The worker then checks a stored tx hash before sending anything new (see [worker.md](worker.md#relayer)). Only the service role can execute it.
 
 ## Storage
 

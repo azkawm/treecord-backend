@@ -7,5 +7,6 @@ export { Constants as DbConstants } from "./db.types.js";
 export * from "./eip712.js";
 export * from "./env.js";
 export * from "./evidence.js";
+export * from "./jobs.js";
 export * from "./policy.js";
 export * from "./schemas.js";

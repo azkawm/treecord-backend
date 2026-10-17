@@ -1,0 +1,19 @@
+# Keep the build context small and free of secrets and local state.
+**/node_modules
+**/.turbo
+**/.next
+**/dist
+**/coverage
+.git
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+packages/contracts/out
+packages/contracts/cache
+packages/contracts/broadcast
+supabase/.temp
+supabase/.branches
+treecord-backend-kit
+treecord-backend-kit.zip

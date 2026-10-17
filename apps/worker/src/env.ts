@@ -10,10 +10,17 @@ if (existsSync(rootEnvFile)) {
   process.loadEnvFile(rootEnvFile);
 }
 
+const positiveInt = (fallback: number) => z.coerce.number().int().positive().default(fallback);
+
 const workerEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
     LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+
+    // Which loops this process runs. `relayer` includes the scheduled tasks, which also send transactions.
+    WORKER_MODE: z.enum(["all", "indexer", "relayer"]).default("all"),
+    // HTTP port for GET /health and GET /metrics. Railway sets PORT.
+    PORT: positiveInt(8080),
 
     // Chain
     BASE_SEPOLIA_RPC_URL: z.url(),
@@ -33,6 +40,18 @@ const workerEnvSchema = z
     MOCK_AI: z.stringbool().default(false),
     AI_SERVICE_URL: z.url().optional(),
     AI_SERVICE_TOKEN: z.string().optional(),
+
+    // Indexer tuning
+    INDEXER_POLL_MS: positiveInt(4_000),
+    INDEXER_CHUNK_BLOCKS: positiveInt(2_000),
+    INDEXER_CONFIRMATIONS: z.coerce.number().int().min(0).default(2),
+    INDEXER_RESCAN_BLOCKS: z.coerce.number().int().min(0).default(5),
+    // Overrides the deploy block from packages/shared addresses, for example to skip history.
+    INDEXER_START_BLOCK: z.coerce.number().int().min(0).optional(),
+
+    // Relayer tuning
+    RELAYER_POLL_MS: positiveInt(2_000),
+    SCHEDULER_INTERVAL_MS: positiveInt(60_000),
   })
   .superRefine((env, ctx) => {
     if (env.MOCK_AI) return;
