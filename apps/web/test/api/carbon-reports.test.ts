@@ -4,6 +4,7 @@ import { GET as holdings } from "@/app/api/carbon/holdings/route";
 import { GET as retirement } from "@/app/api/carbon/retirements/[id]/route";
 import { POST as estimate } from "@/app/api/operator/carbon/estimate/route";
 import { POST as issue } from "@/app/api/operator/carbon/issue/route";
+import { POST as setPrice } from "@/app/api/operator/carbon/price/route";
 import { GET as report } from "@/app/api/reports/campaign/[address]/route";
 import { getChainDeployment } from "@/lib/server/chain";
 import { getSupabase } from "@/lib/server/supabase";
@@ -138,6 +139,51 @@ describe.skipIf(!dbAvailable)("POST /api/operator/carbon/issue", () => {
     ).toBe(400);
     expect(
       (await call(issue, { token: (await createUser("auditor")).token, body: body(campaign) }))
+        .status,
+    ).toBe(403);
+  });
+});
+
+describe.skipIf(!dbAvailable)("POST /api/operator/carbon/price", () => {
+  it("queues setPrice for a mirrored batch and honours Idempotency-Key", async () => {
+    const operator = await createUser("operator");
+    const campaign = await createCampaign();
+    const batchId = await addBatch(campaign, { inventoryUnits: 500n, ledger: ledger() });
+    const body = { batchId: String(batchId), usdcPerTonne: "2500000" };
+    const headers = { "idempotency-key": `price-${batchId}` };
+    const res = await call(setPrice, { token: operator.token, body, headers });
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({
+      price: { batchId, current: "15000000", requested: "2500000" },
+      job: { kind: "set_price", status: "pending" },
+      idempotent: false,
+    });
+    expect(await jobPayload(field(res.body, "job.id"))).toEqual({
+      batchId: String(batchId),
+      usdcPerTonne: "2500000",
+    });
+    const again = await call(setPrice, { token: operator.token, body, headers });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ job: { id: field(res.body, "job.id") }, idempotent: true });
+  });
+
+  it("404s unknown batches, validates input and is operator only", async () => {
+    const operator = await createUser("operator");
+    const unknown = await call(setPrice, {
+      token: operator.token,
+      body: { batchId: "999999999999", usdcPerTonne: "1" },
+    });
+    expect(unknown.status).toBe(404);
+    for (const body of [
+      { batchId: "0", usdcPerTonne: "1" },
+      { batchId: "1", usdcPerTonne: "1.5" },
+      { batchId: "1", usdcPerTonne: 1 },
+    ]) {
+      expect((await call(setPrice, { token: operator.token, body })).status).toBe(400);
+    }
+    const donor = await createUser("donor");
+    expect(
+      (await call(setPrice, { token: donor.token, body: { batchId: "1", usdcPerTonne: "1" } }))
         .status,
     ).toBe(403);
   });

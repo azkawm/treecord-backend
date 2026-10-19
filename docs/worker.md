@@ -30,13 +30,13 @@ The chain stays the source of truth. The worker only mirrors it, and it only act
 
 ```sh
 pnpm db:start                                         # Supabase
-pnpm --filter @treecord/contracts anvil               # terminal 1
+pnpm --filter @treecord/contracts anvil               # terminal 1 (mines a block every second)
 pnpm --filter @treecord/contracts deploy:local        # contracts, writes deployments/31337.json
 pnpm --filter @treecord/contracts export-abis         # refresh packages/shared addresses
 pnpm --filter @treecord/worker dev                    # terminal 2
 ```
 
-Use the anvil values from `packages/contracts/.env.anvil` in the root `.env` (`CHAIN_ID=31337`, `BASE_SEPOLIA_RPC_URL=http://127.0.0.1:8545`, the four keys), and set `MOCK_AI=true` unless the AI service is running.
+Copy `.env.anvil.example` to the root `.env`. It has the anvil keys, the local Supabase keys and `MOCK_AI=true`. anvil must mine on an interval (the package script passes `--block-time 1`): the indexer waits for 2 confirmations, and the API reads chain time from the latest block, which stands still on an idle automine chain.
 
 ### Railway
 
@@ -80,6 +80,8 @@ Each cycle:
 4. Decodes, sorts by block and log index, and applies each event.
 5. Writes the cursor.
 
+If the cursor is ahead of the chain head, the indexer logs a warning once and waits. On anvil this means the chain was restarted under an old database. Run `pnpm db:reset` rather than mixing two chains in one mirror.
+
 Supabase's HTTP API has no multi-statement transactions, so the cursor cannot move in the same transaction as the writes. Instead every write is idempotent and the cursor moves last. A crash replays the chunk, and the replay ends in the same state:
 
 - Event rows have `unique (tx_hash, log_index)` (or their natural key), and a duplicate insert is ignored.
@@ -117,7 +119,7 @@ Three lanes poll the queue side by side. Each claims due jobs with `claim_relaye
 |---|---|---|---|
 | score | `score` | none | `processScoreJob` from `@treecord/pipeline` (see [evidence-pipeline.md](evidence-pipeline.md)) |
 | attestation | `attestation` | relayer | `VerificationGateway.submit`, or `submitBatch` for up to 10 |
-| operator | `claim`, `anchor_assign`, `estimate`, `issue`, `resolve_flag` | operator (holds `OPERATOR_ROLE` and `ISSUER_ROLE`) | `Campaign.claimSlotsFor`, `Campaign.assignAnchorSlots`, `CarbonLedger.setEstimate`, `CarbonLedger.issueBatch`, `TreeRegistry.resolveFlag` |
+| operator | `claim`, `anchor_assign`, `estimate`, `issue`, `set_price`, `resolve_flag` | operator (holds `OPERATOR_ROLE` and `ISSUER_ROLE`) | `Campaign.claimSlotsFor`, `Campaign.assignAnchorSlots`, `CarbonLedger.setEstimate`, `CarbonLedger.issueBatch`, `CarbonLedger.setPrice`, `TreeRegistry.resolveFlag` |
 
 The attester key only signs. It never sends a transaction.
 
@@ -132,6 +134,7 @@ Schemas live in `packages/shared/src/jobs.ts`. uint256 values are decimal string
 | `claim`, `anchor_assign` | `{ campaign, planter, count }` |
 | `estimate` | `{ campaign, estimatedAmount }` in carbon units (1000 = 1 tCO2e) |
 | `issue` | `{ campaign, registry, serialStart, serialEnd, vintage, amount }` |
+| `set_price` | `{ batchId, usdcPerTonne }` |
 | `resolve_flag` | `{ treeId, uphold, noteHash }` |
 
 A payload that fails its schema fails the job at once.

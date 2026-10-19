@@ -358,6 +358,18 @@ export const carbonIssueRequestSchema = z
   .strict();
 export type CarbonIssueRequest = z.infer<typeof carbonIssueRequestSchema>;
 
+/** Batch ids are sequential on-chain (ERC-1155 token ids). */
+export const batchIdSchema = z.string().regex(/^[1-9][0-9]{0,15}$/, "must be a positive batch id");
+
+/** POST /api/operator/carbon/price: USDC base units per tonne for inventory sales. 0 pauses sales. */
+export const carbonPriceRequestSchema = z
+  .object({
+    batchId: batchIdSchema,
+    usdcPerTonne: uintStringSchema,
+  })
+  .strict();
+export type CarbonPriceRequest = z.infer<typeof carbonPriceRequestSchema>;
+
 /** GET /api/carbon/batches query string. */
 export const carbonBatchesQuerySchema = z
   .object({ campaign: addressInputSchema.optional() })

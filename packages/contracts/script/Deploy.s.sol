@@ -45,7 +45,9 @@ contract Deploy is Script {
         address treasury = vm.envAddress("TREASURY_ADDRESS");
         string memory carbonUri =
             vm.envOr("CARBON_METADATA_URI", string("https://treecord.app/api/carbon/batches/{id}.json"));
-        uint256 deployBlock = block.number;
+        // A fresh anvil has nothing before the deploy, and 0 keeps the committed deployments/31337.json stable
+        // when anvil mines on an interval.
+        uint256 deployBlock = block.chainid == ANVIL_CHAIN_ID ? 0 : block.number;
 
         vm.startBroadcast(deployerKey);
 

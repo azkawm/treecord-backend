@@ -383,13 +383,13 @@ Scripts live in `packages/contracts/script`. `script/with-env.mjs` loads env var
 ### Local (anvil)
 
 ```sh
-pnpm --filter @treecord/contracts anvil                 # terminal 1
+pnpm --filter @treecord/contracts anvil                 # terminal 1 (anvil --block-time 1)
 pnpm --filter @treecord/contracts deploy:local          # terminal 2
 pnpm --filter @treecord/contracts demo-campaign:local
 pnpm --filter @treecord/contracts export-abis
 ```
 
-`deploy:local` uses `packages/contracts/.env.anvil`, which holds anvil's public default dev keys. On chain 31337 the deploy script deploys a MockUSDC instead of reading `USDC_ADDRESS`. A fresh anvil always produces the same addresses, so the committed `deployments/31337.json` stays valid.
+`deploy:local` uses `packages/contracts/.env.anvil`, which holds anvil's public default dev keys. On chain 31337 the deploy script deploys a MockUSDC instead of reading `USDC_ADDRESS`. A fresh anvil always produces the same addresses, and on anvil the script records `deployBlock` as 0, so the committed `deployments/31337.json` stays valid.
 
 ### Base Sepolia
 

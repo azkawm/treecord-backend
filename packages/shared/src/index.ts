@@ -12,3 +12,4 @@ export * from "./evidence.js";
 export * from "./jobs.js";
 export * from "./policy.js";
 export * from "./schemas.js";
+export * from "./wallet-auth.js";

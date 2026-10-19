@@ -61,7 +61,7 @@ Writer legend: **API** = Next.js route handlers, **Worker** = indexer and relaye
 | Table | Purpose | Written by |
 |---|---|---|
 | `campaign_metadata` | Title, description, species, region and images uploaded before the factory call. Its id becomes the campaign `metadataURI` | API |
-| `campaigns` | Mirror of each campaign's config, status and funding, merged with its metadata. `estimated_amount` holds the pre-certification carbon estimate and `estimate_method` how it was computed | Worker (chain fields), API (estimate and method) |
+| `campaigns` | Mirror of each campaign's config, status and funding, merged with its metadata. `estimated_amount` holds the pre-certification carbon estimate and `estimate_method` how it was computed. `is_demo` marks campaigns created by the demo seed, the only ones `reset_demo_data` may remove | Worker (chain fields), API (estimate and method), demo seed (`is_demo`) |
 | `contributions` | `Contributed` events | Worker |
 | `refunds` | `Refunded` events | Worker |
 | `slots` | Slot ownership and status (`open`, `claimed`, `planted`, `anchor`) from claim, anchor assignment and planting events | Worker |
@@ -102,7 +102,7 @@ Writer legend: **API** = Next.js route handlers, **Worker** = indexer and relaye
 | Table | Purpose | Written by |
 |---|---|---|
 | `chain_cursor` | Last indexed block per indexer stream (`indexer:<chainId>`) | Worker |
-| `relayer_jobs` | Queue of work for the worker: `score`, `attestation`, `claim`, `anchor_assign`, `estimate`, `issue`, `resolve_flag`. Tracks status, attempts, errors, tx hash and an optional idempotency key. An attestation nonce can be queued only once | API (enqueue), Worker (process) |
+| `relayer_jobs` | Queue of work for the worker: `score`, `attestation`, `claim`, `anchor_assign`, `estimate`, `issue`, `set_price`, `resolve_flag`. Tracks status, attempts, errors, tx hash and an optional idempotency key. An attestation nonce can be queued only once | API (enqueue), Worker (process) |
 
 ## Key constraints
 
@@ -115,12 +115,14 @@ Writer legend: **API** = Next.js route handlers, **Worker** = indexer and relaye
 | At most 3 active devices per planter | `enforce_device_limit` trigger |
 | Planters accept the carbon rights agreement | Check constraint on `profiles` |
 | An attestation nonce is used once | `submissions.attestation_nonce` unique, partial unique index on `relayer_jobs (payload->>'nonce')` |
-| Audit access log is append only | `reject_mutation` triggers |
+| Audit access log is append only | `reject_mutation` triggers for update and truncate, `guard_audit_access_log_delete` for delete (allowed only inside `reset_demo_data` for demo campaigns) |
 | Slots add up | `campaigns.anchor_slots + open_slots = tree_target` |
 
 ## Functions
 
 `claim_relayer_jobs(kinds, limit, worker, stale_after default 5 minutes)` claims due jobs with `FOR UPDATE SKIP LOCKED`, so several workers never take the same job. It marks them `processing`, records the worker and counts the attempt. Jobs stuck in `processing` or `sent` longer than `stale_after`, for example after a crash, are claimed again. The worker then checks a stored tx hash before sending anything new (see [worker.md](worker.md#relayer)). Only the service role can execute it.
+
+`reset_demo_data(campaigns, profile_ids)` backs `pnpm demo:reset`. It removes only campaigns with `is_demo` and only profiles created by wallet sign-in (`privy_user_id` starting with `wallet:`), together with their audits, carbon mirror, submissions and jobs, and returns counts plus the storage paths of the deleted videos and keyframes. A profile that non-demo rows still reference is kept. Inside the function the access log trigger lets deletes through for demo campaigns only, so the audit trail of every real campaign stays append only. Only the service role can execute it.
 
 ## Storage
 

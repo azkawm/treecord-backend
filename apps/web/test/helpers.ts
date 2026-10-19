@@ -56,7 +56,7 @@ setChainClock(async () => nowSec());
 const wallets = new Map<string, string | null>();
 
 /** Test identity provider: a token `test:<userId>` is valid, anything else is rejected. */
-const fakeIdentity: IdentityProvider = {
+export const fakeIdentity: IdentityProvider = {
   async verifyAccessToken(token) {
     if (!token.startsWith("test:")) throw new Error("invalid token");
     return { userId: token.slice("test:".length) };

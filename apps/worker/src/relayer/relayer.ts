@@ -1,7 +1,7 @@
 // Processes relayer_jobs (prompt 9) in three lanes that run side by side:
 // - score:       the evidence scoring pipeline (AI call, policy, attestation signing). No transaction.
 // - attestation: VerificationGateway.submit, batched up to 10 per transaction, sent by the relayer wallet.
-// - operator:    claim, anchor_assign, estimate, issue and resolve_flag, sent by the operator wallet.
+// - operator:    claim, anchor_assign, estimate, issue, set_price and resolve_flag, sent by the operator wallet.
 import {
   loadSubmission,
   processScoreJob,
@@ -46,6 +46,7 @@ export const OPERATOR_KINDS: JobKind[] = [
   "anchor_assign",
   "estimate",
   "issue",
+  "set_price",
   "resolve_flag",
 ];
 

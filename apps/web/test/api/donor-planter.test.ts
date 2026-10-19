@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { GET as dashboard } from "@/app/api/donor/dashboard/route";
 import { GET as planterChallenges } from "@/app/api/planter/challenges/route";
+import { GET as planterSlots } from "@/app/api/planter/slots/route";
 import { GET as planterTrees } from "@/app/api/planter/trees/route";
 import { getSupabase } from "@/lib/server/supabase";
 import { addContribution, addOpenFlag, addPayout } from "../fixtures";
 import {
+  assignSlots,
   call,
   createCampaign,
   createTree,
@@ -155,5 +157,46 @@ describe.skipIf(!dbAvailable)("planter endpoints", () => {
     });
     expect(field<unknown[]>(res.body, "challenges")).toHaveLength(1);
     expect((await call(planterChallenges, { token: auditor.token })).status).toBe(403);
+  });
+
+  it("GET /api/planter/slots lists my claimed slots that have no tree yet", async () => {
+    const planter = await createUser("planter");
+    const other = await createUser("planter");
+    const campaign = await createCampaign();
+    await assignSlots(campaign, [
+      { slotId: 1, kind: "open", planter: planter.wallet },
+      { slotId: 3, kind: "anchor", planter: planter.wallet },
+      { slotId: 2, kind: "open", planter: other.wallet },
+    ]);
+    // Slot 1 is planted: listed under trees instead.
+    await getSupabase()
+      .from("slots")
+      .update({ status: "planted" })
+      .eq("campaign_address", campaign)
+      .eq("slot_id", 1);
+
+    const res = await call(planterSlots, { token: planter.token });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      slots: [
+        {
+          campaign: {
+            address: campaign,
+            title: "Mahogany for Jakarta",
+            status: "active",
+            regionName: "Jakarta",
+            regionGeohash: "qqguwvt",
+            regionRadiusM: 5000,
+          },
+          slotId: 3,
+          kind: "anchor",
+          claimedAt: expect.any(String),
+          claimedTx: null,
+        },
+      ],
+    });
+    expect((await call(planterSlots, { token: (await createUser("donor")).token })).status).toBe(
+      403,
+    );
   });
 });

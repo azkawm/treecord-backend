@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "description": "Treecord web app and API route handlers",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

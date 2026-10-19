@@ -34,6 +34,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.anvil.example
 # anvil's public default dev keys, safe to commit
 !packages/contracts/.env.anvil
 
@@ -48,3 +49,10 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Demo script state (test wallets, device keys)
+scripts/demo/.state/
+
+# Demo clips (see scripts/demo/videos/README.md)
+scripts/demo/videos/*
+!scripts/demo/videos/README.md

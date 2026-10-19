@@ -65,6 +65,7 @@ export class Indexer {
   private readonly watched: WatchedAddresses;
   private campaignsLoaded = false;
   private blockTimes = new Map<bigint, string>();
+  private warnedCursorAhead = false;
 
   /** Last indexed block and chain head, for /health. */
   status: { lastBlock: bigint | null; head: bigint | null; lastRunAt: Date | null } = {
@@ -100,6 +101,18 @@ export class Indexer {
     const head = await client.getBlockNumber();
     const cursor = await this.readCursor();
     this.status = { ...this.status, head, lastBlock: cursor, lastRunAt: new Date() };
+    if (cursor !== null && cursor > head) {
+      // On anvil this means the chain was restarted under an old database. Re-indexing over stale mirror rows
+      // would mix two chains, so wait and say what to do instead.
+      if (!this.warnedCursorAhead) {
+        log.warn(
+          { cursor: cursor.toString(), head: head.toString(), cursorName: this.cursorName },
+          "Chain head is behind the indexer cursor. If a local chain was restarted, reset the database (pnpm db:reset).",
+        );
+        this.warnedCursorAhead = true;
+      }
+      return null;
+    }
     const range = nextRange({
       cursor,
       startBlock: this.startBlock,

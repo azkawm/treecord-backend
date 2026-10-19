@@ -5,6 +5,8 @@ Next.js route handlers in `apps/web/app/api`. All bodies and responses are JSON.
 ## Conventions
 
 - **Auth:** `Authorization: Bearer <Privy access token>`. The server verifies the token with Privy, then loads the caller's profile, creating it on first sign-in with role `donor` and the user's embedded wallet.
+- **Wallet sign-in (demo only):** when the server runs with `DEMO_WALLET_AUTH=true` it also accepts `Bearer wallet.<payload>.<signature>`, where the payload is base64url JSON `{ address, chainId, issuedAt, expiresAt }` and the signature is the wallet's EIP-191 `personal_sign` over `Treecord demo sign-in
+<payload>`. Tokens live at most 24 hours and must match `CHAIN_ID`. The profile's user id is `wallet:<address>` and its wallet is the signer. The demo scripts sign in this way (`packages/shared/src/wallet-auth.ts`). It is off by default, and Privy stays the only sign-in for real users.
 - **Roles:** `donor`, `planter`, `auditor`, `operator`. Users can switch between donor and planter themselves. Auditor and operator are granted manually.
 - **Validation:** every body and query string is validated with the zod schemas in `packages/shared/src/schemas.ts`. Unknown fields are rejected.
 - **Money** is always a decimal string of USDC base units (6 decimals), for example `"1000000"` = 1 USDC. Carbon amounts are on-chain units with 3 decimals (`"1000"` = 1 tCO2e). Estimates before issuance are labeled `pre-certification`.
@@ -58,6 +60,7 @@ Next.js route handlers in `apps/web/app/api`. All bodies and responses are JSON.
 | POST | `/api/operator/flags/:id/resolve` | operator | Uphold or dismiss an on-chain flag |
 | GET | `/api/reports/campaign/:address` | public | Campaign impact report |
 | GET | `/api/planter/trees` | planter | My trees with milestone windows and amounts |
+| GET | `/api/planter/slots` | planter | My claimed slots that have no tree yet |
 | GET | `/api/planter/challenges` | planter | Open challenges on my trees |
 | POST | `/api/audit/sessions` | auditor | Open a session with a reproducible random sample |
 | GET | `/api/audit/sessions/:id` | auditor (owner) | Session, sample, findings, challenges |
@@ -68,6 +71,7 @@ Next.js route handlers in `apps/web/app/api`. All bodies and responses are JSON.
 | GET | `/api/audit/sessions/:id/reproduce` | public | Inputs and check for recomputing the sample |
 | POST | `/api/operator/carbon/estimate` | operator | Compute and set the pre-certification estimate |
 | POST | `/api/operator/carbon/issue` | operator | Mirror a registry issuance on-chain |
+| POST | `/api/operator/carbon/price` | operator | Set the inventory price of a batch |
 | GET | `/api/carbon/batches` | public | Issued batches with inventory |
 | GET | `/api/carbon/holdings` | any | My reservations, balances and retirements |
 | GET | `/api/carbon/retirements/:id` | public | Retirement certificate |
@@ -648,6 +652,25 @@ Role: planter, with a wallet.
 
 `nextMilestone` is the first milestone still `upcoming` or `open`, or null when the tree is not alive. Amounts follow `Campaign.milestoneAmount`: milestones 0 to 4 pay their share of the per-tree incentive, milestone 5 the remainder.
 
+### GET /api/planter/slots
+
+Role: planter, with a wallet. Claimed or assigned slots with no tree yet, so the app knows which `slotId` goes in a PLANTED payload. Planted slots appear in `GET /api/planter/trees` instead.
+
+**200**
+
+```json
+{
+  "slots": [
+    {
+      "campaign": { "address": "0x...", "title": "...", "status": "active", "regionName": "Jakarta", "regionGeohash": "qqguwvt", "regionRadiusM": 5000 },
+      "slotId": 3, "kind": "open", "claimedAt": "...", "claimedTx": "0x..."
+    }
+  ]
+}
+```
+
+`kind` is `open` (claimed by the planter) or `anchor` (assigned by an operator).
+
 ### GET /api/planter/challenges
 
 Role: planter, with a wallet. Unexpired, unfulfilled challenges on the caller's trees, soonest expiry first.
@@ -838,6 +861,22 @@ Role: operator. Send an `Idempotency-Key` so the same issuance is never mirrored
 
 Errors: 400 `validation_error`, 403, 404, 409 `campaign_not_issuable` (not active or completed).
 
+### POST /api/operator/carbon/price
+
+Role: operator. Supports `Idempotency-Key`.
+
+```json
+{ "batchId": "1", "usdcPerTonne": "15000000" }
+```
+
+`usdcPerTonne` is USDC base units per tonne. `0` pauses sales. Enqueues a `set_price` job (`CarbonLedger.setPrice` from the operator wallet) with payload `{ "batchId", "usdcPerTonne" }`. The indexer mirrors `PriceSet` into the batch, after which buyers call `CarbonLedger.buy(batchId, units)` from their own wallet and pay `ceil(units × price / 1000)`.
+
+**202** `{ "price": { "batchId": 1, "current": "15000000", "requested": "15000000" }, "job": Job, "idempotent": false }`
+
+`current` is the mirrored price before this change, or null if none was set.
+
+Errors: 400 `validation_error`, 403, 404 (batch not mirrored yet), 409 `idempotency_key_reused`.
+
 ### GET /api/carbon/batches
 
 Public. Optional `?campaign=0x...`.
@@ -888,7 +927,7 @@ Errors: 400 `invalid_path`, 404.
 
 ## Testing
 
-Route tests live in `apps/web/test/api` and run against the local Supabase stack (`pnpm db:start`), with Privy replaced by a test identity provider, chain time following the wall clock, and a fixed latest block for audit seeds. Without a running database they are skipped with a warning. Precheck unit tests (`apps/web/test/precheck.test.ts`) need nothing running. Sampling, report hashing and the estimate math have unit tests in `packages/shared` (`audit.test.ts`, `carbon.test.ts`). Flag hash linking is tested on both sides: the API stores `keccak256(reasonText)` (`trees-flags.test.ts`), and the indexer links `TreeFlagged` by that hash (`apps/worker/src/indexer/apply.db.test.ts`).
+Route tests live in `apps/web/test/api` and run against the local Supabase stack (`pnpm db:start`), with Privy replaced by a test identity provider (`wallet-auth.test.ts` covers wallet sign-in with the real provider classes), chain time following the wall clock, and a fixed latest block for audit seeds. Without a running database they are skipped with a warning. Precheck unit tests (`apps/web/test/precheck.test.ts`) need nothing running. Sampling, report hashing and the estimate math have unit tests in `packages/shared` (`audit.test.ts`, `carbon.test.ts`). Flag hash linking is tested on both sides: the API stores `keccak256(reasonText)` (`trees-flags.test.ts`), and the indexer links `TreeFlagged` by that hash (`apps/worker/src/indexer/apply.db.test.ts`).
 
 ```sh
 pnpm db:start

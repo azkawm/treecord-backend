@@ -1,7 +1,7 @@
 -- Database rule tests. Run with: pnpm db:test (supabase test db).
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(33);
+select plan(40);
 
 -- ---------------------------------------------------------------------------
 -- Security
@@ -187,6 +187,78 @@ select is(
   (select count(*)::int from public.claim_relayer_jobs(array['attestation']::public.relayer_job_kind[], 10, 'worker-2')),
   1,
   'a stale sent job is claimed again'
+);
+
+-- ---------------------------------------------------------------------------
+-- Demo reset (scripts/demo/reset.ts)
+-- ---------------------------------------------------------------------------
+
+select ok(
+  not has_function_privilege('authenticated', 'public.reset_demo_data(text[], uuid[])', 'execute'),
+  'clients cannot reset demo data'
+);
+
+insert into public.profiles (id, privy_user_id, wallet_address, role)
+values ('00000000-0000-4000-8000-000000000003', 'wallet:0x1000000000000000000000000000000000000003',
+        '0x1000000000000000000000000000000000000003', 'auditor');
+insert into public.campaigns (
+  address, chain_id, creator_address, region_radius_m, region_geohash, tree_target, anchor_slots, open_slots,
+  per_planter_cap, funding_target, funding_deadline, claim_deadline, commitment_units, time_unit_seconds, split,
+  metadata_uri, created_block, created_tx
+) values (
+  '0x2000000000000000000000000000000000000002', 84532, '0x1000000000000000000000000000000000000003', 5000, 'qqguwvt',
+  4, 1, 3, 3, 1000000, now() + interval '1 day', now() + interval '2 days', 36, 60,
+  '{"incentivesBps":7000,"seedlingsBps":1000,"verificationBps":500,"reserveBps":1000,"feeBps":500}',
+  'treecord://metadata/demo', 2, '0x' || repeat('6', 64)
+);
+insert into public.trees (tree_id, campaign_address, slot_id, planter_address, planted_at, geohash,
+  latest_evidence_hash, planted_tx)
+values (2, '0x2000000000000000000000000000000000000002', 1, '0x1000000000000000000000000000000000000001', now(),
+  'qqguwvt', '0x' || repeat('7', 64), '0x' || repeat('8', 64));
+insert into public.audit_sessions (id, auditor_profile_id, campaign_address, seed, seed_block_number, seed_block_hash, sample_size)
+values ('00000000-0000-4000-8000-0000000000bb', '00000000-0000-4000-8000-000000000003',
+        '0x2000000000000000000000000000000000000002', '0x' || repeat('4', 64), 11, '0x' || repeat('5', 64), 1);
+insert into public.audit_samples (session_id, tree_id, position) values ('00000000-0000-4000-8000-0000000000bb', 2, 0);
+insert into public.audit_access_log (session_id, auditor_profile_id, resource)
+values ('00000000-0000-4000-8000-0000000000bb', '00000000-0000-4000-8000-000000000003', 'tree:2');
+insert into public.submissions (profile_id, campaign_address, tree_id, kind, milestone, video_sha256, status, video_path)
+values ('00000000-0000-4000-8000-000000000001', '0x2000000000000000000000000000000000000002', 2, 'ALIVE', 1,
+        rpad('c1', 64, '0'), 'onchain', 'demo/c1.mp4');
+
+select is(
+  (public.reset_demo_data(array['0x2000000000000000000000000000000000000002'], '{}') ->> 'campaigns')::int,
+  0,
+  'a campaign not marked is_demo is never reset'
+);
+select throws_ok(
+  $$ delete from public.audit_access_log where session_id = '00000000-0000-4000-8000-0000000000bb' $$,
+  '42501', null, 'demo access logs stay append only outside the reset'
+);
+
+update public.campaigns set is_demo = true where address = '0x2000000000000000000000000000000000000002';
+select is(
+  public.reset_demo_data(
+    array['0x2000000000000000000000000000000000000002', '0x2000000000000000000000000000000000000001'],
+    array['00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002']::uuid[]
+  ) - 'keptProfiles',
+  '{"campaigns": 1, "profiles": 1, "submissions": 1, "evidencePaths": ["demo/c1.mp4"], "keyframePaths": []}'::jsonb,
+  'reset removes the demo campaign, its audit trail and submission, and the wallet sign-in profile'
+);
+select ok(
+  not exists (select 1 from public.campaigns where address = '0x2000000000000000000000000000000000000002')
+  and not exists (select 1 from public.audit_sessions where id = '00000000-0000-4000-8000-0000000000bb')
+  and not exists (select 1 from public.profiles where id = '00000000-0000-4000-8000-000000000003'),
+  'demo rows are gone'
+);
+select ok(
+  exists (select 1 from public.campaigns where address = '0x2000000000000000000000000000000000000001')
+  and exists (select 1 from public.profiles where id = '00000000-0000-4000-8000-000000000002')
+  and exists (select 1 from public.audit_access_log where session_id = '00000000-0000-4000-8000-0000000000aa'),
+  'non-demo campaigns, Privy profiles and their audit logs are untouched'
+);
+select throws_ok(
+  $$ delete from public.audit_access_log $$,
+  '42501', null, 'non-demo access logs still cannot be deleted'
 );
 
 select * from finish();

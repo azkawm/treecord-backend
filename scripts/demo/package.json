@@ -1,0 +1,23 @@
+{
+  "name": "@treecord/demo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Demo seed, lifecycle and reset scripts that drive the real API and contracts",
+  "type": "module",
+  "scripts": {
+    "seed": "tsx seed.ts",
+    "lifecycle": "tsx run-lifecycle.ts",
+    "reset": "tsx reset.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.118.0",
+    "@treecord/shared": "workspace:*",
+    "viem": "2.57.7",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

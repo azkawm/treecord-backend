@@ -36,7 +36,13 @@ export const issueJobPayloadSchema = z.object({
   amount: uintStringSchema,
 });
 
-/** `resolve_flag`: TreeRegistry.resolveFlag(treeId, uphold, noteHash), sent by the operator wallet. */
+/** `set_price`: CarbonLedger.setPrice(batchId, usdcPerTonne), sent by the operator wallet. */
+export const setPriceJobPayloadSchema = z.object({
+  batchId: uintStringSchema,
+  usdcPerTonne: uintStringSchema,
+});
+
+/** `resolve_flag`:TreeRegistry.resolveFlag(treeId, uphold, noteHash), sent by the operator wallet. */
 export const resolveFlagJobPayloadSchema = z.object({
   treeId: uintStringSchema,
   uphold: z.boolean(),
@@ -74,6 +80,7 @@ export const attestationJobPayloadSchema = z.object({
 export type ClaimJobPayload = z.infer<typeof claimJobPayloadSchema>;
 export type EstimateJobPayload = z.infer<typeof estimateJobPayloadSchema>;
 export type IssueJobPayload = z.infer<typeof issueJobPayloadSchema>;
+export type SetPriceJobPayload = z.infer<typeof setPriceJobPayloadSchema>;
 export type ResolveFlagJobPayload = z.infer<typeof resolveFlagJobPayloadSchema>;
 export type ScoreJobPayload = z.infer<typeof scoreJobPayloadSchema>;
 export type AttestationJobPayload = z.infer<typeof attestationJobPayloadSchema>;

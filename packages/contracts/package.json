@@ -10,7 +10,7 @@
     "coverage": "forge coverage --no-match-coverage \"(test|script)\"",
     "lint": "forge fmt --check",
     "format": "forge fmt",
-    "anvil": "anvil",
+    "anvil": "anvil --block-time 1",
     "deploy:local": "node script/with-env.mjs --env .env.anvil forge script script/Deploy.s.sol --rpc-url anvil --broadcast",
     "demo-campaign:local": "node script/with-env.mjs --env .env.anvil forge script script/CreateDemoCampaign.s.sol --rpc-url anvil --broadcast",
     "deploy:base-sepolia": "node script/with-env.mjs forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast",

@@ -7,6 +7,7 @@ import {
   estimateJobPayloadSchema,
   issueJobPayloadSchema,
   resolveFlagJobPayloadSchema,
+  setPriceJobPayloadSchema,
   treeRegistryAbi,
   verificationGatewayAbi,
   type AttestationJobPayload,
@@ -47,7 +48,7 @@ function parse<T>(
   return result.data;
 }
 
-/** Calls for the operator lane: claim, anchor_assign, estimate, issue, resolve_flag. */
+/** Calls for the operator lane: claim, anchor_assign, estimate, issue, set_price, resolve_flag. */
 export function operatorCall(
   kind: JobKind,
   payload: unknown,
@@ -125,6 +126,31 @@ export function operatorCall(
             address,
             abi: carbonLedgerAbi,
             functionName: "issueBatch",
+            args,
+            nonce,
+          }),
+      };
+    }
+    case "set_price": {
+      const p = parse(setPriceJobPayloadSchema, kind, payload);
+      const args = [BigInt(p.batchId), BigInt(p.usdcPerTonne)] as const;
+      const address = deployment.carbonLedger;
+      return {
+        wallet: "operator",
+        description: `setPrice(${p.batchId}, ${p.usdcPerTonne})`,
+        simulate: (client, account) =>
+          client.simulateContract({
+            address,
+            abi: carbonLedgerAbi,
+            functionName: "setPrice",
+            args,
+            account,
+          }),
+        send: (wallet, nonce) =>
+          wallet.writeContract({
+            address,
+            abi: carbonLedgerAbi,
+            functionName: "setPrice",
             args,
             nonce,
           }),
